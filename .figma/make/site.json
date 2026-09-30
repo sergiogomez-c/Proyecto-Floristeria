@@ -1,0 +1,10 @@
+{
+  "description": "This online florist offers a wide range of flowers, plants, and gardening supplies, along with a forum for users to share their gardening projects.",
+  "robots": {
+    "index": false
+  },
+  "accessibility": {
+    "addBypassLinks": false,
+    "ignoreReducedMotion": false
+  }
+}
