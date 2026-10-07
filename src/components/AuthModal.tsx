@@ -1,11 +1,16 @@
 import { useEffect, useRef, useState, type FormEvent, type KeyboardEvent } from 'react'
+// IMPORTANTE: Ajusta esta ruta dependiendo de dónde guardaste supabase.ts
+import { supabase } from '../supabase' 
 
 const inputClass = 'mt-2 w-full border border-accent/25 bg-sponsor px-4 py-3 text-sm text-foreground placeholder:text-foreground/30 outline-none transition-colors focus:border-accent focus-visible:ring-1 focus-visible:ring-accent'
 const labelClass = 'block font-mono text-xs uppercase tracking-widest text-foreground/70'
 
 export default function AuthModal({ onClose }: { onClose: () => void }) {
   const [mode, setMode] = useState<'login' | 'register'>('login')
-  const [validated, setValidated] = useState(false)
+  const [loading, setLoading] = useState(false)
+  const [errorMsg, setErrorMsg] = useState('')
+  const [successMsg, setSuccessMsg] = useState('')
+  
   const dialogRef = useRef<HTMLDivElement>(null)
   const emailRef = useRef<HTMLInputElement>(null)
   const passwordRef = useRef<HTMLInputElement>(null)
@@ -37,19 +42,66 @@ export default function AuthModal({ onClose }: { onClose: () => void }) {
     }
   }
 
-  function handleSubmit(event: FormEvent<HTMLFormElement>) {
+  async function handleSubmit(event: FormEvent<HTMLFormElement>) {
     event.preventDefault()
-    if (mode === 'register' && passwordRef.current?.value !== confirmRef.current?.value) {
-      confirmRef.current?.setCustomValidity('Las contraseñas no coinciden.')
-      confirmRef.current?.reportValidity()
-      return
+    setErrorMsg('')
+    setSuccessMsg('')
+    
+    const email = emailRef.current?.value || ''
+    const password = passwordRef.current?.value || ''
+
+    if (mode === 'register') {
+      const confirm = confirmRef.current?.value || ''
+      if (password !== confirm) {
+        confirmRef.current?.setCustomValidity('Las contraseñas no coinciden.')
+        confirmRef.current?.reportValidity()
+        return
+      }
+      
+      const username = (document.getElementById('auth-username') as HTMLInputElement)?.value || ''
+
+      setLoading(true)
+      // Llamada real a Supabase para registrar
+      const { data, error } = await supabase.auth.signUp({
+        email,
+        password,
+        options: {
+          data: { username } // Guardamos el nombre de usuario como metadato
+        }
+      })
+      setLoading(false)
+
+      if (error) {
+        setErrorMsg(error.message)
+      } else {
+        setSuccessMsg('¡Cuenta creada! Revisa la bandeja de entrada de tu correo para confirmarla.')
+      }
+
+    } else {
+      // Llamada real a Supabase para iniciar sesión
+      setLoading(true)
+      const { data, error } = await supabase.auth.signInWithPassword({
+        email,
+        password,
+      })
+      setLoading(false)
+
+      if (error) {
+        setErrorMsg('Credenciales incorrectas o usuario no encontrado.')
+      } else {
+        setSuccessMsg('¡Acceso concedido!')
+        // Cerramos el modal automáticamente tras 1 segundo
+        setTimeout(() => {
+          onClose()
+        }, 1000)
+      }
     }
-    setValidated(true)
   }
 
   function switchMode(nextMode: 'login' | 'register') {
     setMode(nextMode)
-    setValidated(false)
+    setErrorMsg('')
+    setSuccessMsg('')
   }
 
   return (
@@ -65,23 +117,39 @@ export default function AuthModal({ onClose }: { onClose: () => void }) {
           <button type="button" aria-pressed={mode === 'register'} onClick={() => switchMode('register')} className={`flex-1 border-b-2 px-3 py-3 font-mono text-xs uppercase tracking-widest transition-colors ${mode === 'register' ? 'border-accent text-accent' : 'border-transparent text-foreground/50 hover:text-foreground'}`}>Crear cuenta</button>
         </div>
 
-        <form onSubmit={handleSubmit} onChange={() => setValidated(false)} className="mt-7 space-y-5">
-          {mode === 'register' && <label className={labelClass} htmlFor="auth-username">Nombre de usuario
-            <input id="auth-username" name="username" type="text" autoComplete="username" required className={inputClass} placeholder="Elige cómo quieres llamarte" />
-          </label>}
+        <form onSubmit={handleSubmit} className="mt-7 space-y-5">
+          {mode === 'register' && (
+            <label className={labelClass} htmlFor="auth-username">Nombre de usuario
+              <input id="auth-username" name="username" type="text" autoComplete="username" required disabled={loading} className={inputClass} placeholder="Elige cómo quieres llamarte" />
+            </label>
+          )}
           <label className={labelClass} htmlFor="auth-email">Correo electrónico
-            <input ref={emailRef} id="auth-email" name="email" type="email" autoComplete="email" required className={inputClass} placeholder="tu@correo.com" />
+            <input ref={emailRef} id="auth-email" name="email" type="email" autoComplete="email" required disabled={loading} className={inputClass} placeholder="tu@correo.com" />
           </label>
           <label className={labelClass} htmlFor="auth-password">Contraseña
-            <input ref={passwordRef} id="auth-password" name="password" type="password" autoComplete={mode === 'login' ? 'current-password' : 'new-password'} minLength={8} required className={inputClass} placeholder="Mínimo 8 caracteres" />
+            <input ref={passwordRef} id="auth-password" name="password" type="password" autoComplete={mode === 'login' ? 'current-password' : 'new-password'} minLength={8} required disabled={loading} className={inputClass} placeholder="Mínimo 8 caracteres" />
           </label>
-          {mode === 'register' && <label className={labelClass} htmlFor="auth-confirm">Confirmar contraseña
-            <input ref={confirmRef} id="auth-confirm" name="confirmPassword" type="password" autoComplete="new-password" minLength={8} required onInput={event => event.currentTarget.setCustomValidity('')} className={inputClass} placeholder="Repite tu contraseña" />
-          </label>}
+          {mode === 'register' && (
+            <label className={labelClass} htmlFor="auth-confirm">Confirmar contraseña
+              <input ref={confirmRef} id="auth-confirm" name="confirmPassword" type="password" autoComplete="new-password" minLength={8} required disabled={loading} onInput={event => event.currentTarget.setCustomValidity('')} className={inputClass} placeholder="Repite tu contraseña" />
+            </label>
+          )}
 
-          <p className="border border-accent/30 bg-accent/10 p-4 text-sm leading-relaxed text-foreground/80">Vista de demostración: aún no hay un servidor de cuentas. No introduzcas credenciales reales; no se guardan los datos ni se inicia sesión.</p>
-          <button type="submit" className="w-full border border-accent bg-accent px-6 py-4 font-mono text-xs uppercase tracking-widest text-ink transition-colors hover:bg-transparent hover:text-accent focus-visible:outline-2 focus-visible:outline-offset-4 focus-visible:outline-primary">Validar {mode === 'login' ? 'acceso' : 'registro'} ↗</button>
-          {validated && <p role="status" className="text-sm leading-relaxed text-accent">Campos validados. Esta demostración no ha {mode === 'login' ? 'iniciado sesión' : 'creado una cuenta'} ni guardado tus datos.</p>}
+          {errorMsg && (
+            <p className="border border-red-500/30 bg-red-500/10 p-4 text-sm leading-relaxed text-red-200">
+              {errorMsg}
+            </p>
+          )}
+          
+          {successMsg && (
+            <p className="border border-green-500/30 bg-green-500/10 p-4 text-sm leading-relaxed text-green-200">
+              {successMsg}
+            </p>
+          )}
+
+          <button type="submit" disabled={loading} className="w-full border border-accent bg-accent px-6 py-4 font-mono text-xs uppercase tracking-widest text-ink transition-colors hover:bg-transparent hover:text-accent focus-visible:outline-2 focus-visible:outline-offset-4 focus-visible:outline-primary disabled:opacity-50">
+            {loading ? 'Procesando...' : `Validar ${mode === 'login' ? 'acceso' : 'registro'} ↗`}
+          </button>
         </form>
       </div>
     </div>
