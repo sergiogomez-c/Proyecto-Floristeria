@@ -8,6 +8,7 @@ import SobreNosotros from './pages/SobreNosotros'
 import Patrocinio from './pages/Patrocinio'
 import AuthModal from './components/AuthModal'
 import Carrito from './pages/Carrito'
+import { supabase } from './supabase' // <-- AÑADIDO: Importación de Supabase
 
 type Page = 'home' | 'shop' | 'botanica' | 'reservas' | 'foro' | 'nosotros' | 'patrocinio' | 'carrito'
 
@@ -35,6 +36,11 @@ export default function App() {
   const [menuOpen, setMenuOpen] = useState(false)
   const [authOpen, setAuthOpen] = useState(false)
   const authTrigger = useRef<HTMLButtonElement>(null)
+  
+  // <-- AÑADIDO: Estados para el usuario y su menú desplegable
+  const [user, setUser] = useState<any>(null)
+  const [userMenuOpen, setUserMenuOpen] = useState(false)
+
   const [cart, setCart] = useState<number[]>(() => {
     try {
       const stored = JSON.parse(localStorage.getItem('deepintheflower-cart') || '[]')
@@ -45,6 +51,19 @@ export default function App() {
       return []
     }
   })
+
+  // <-- AÑADIDO: El "Radar" de Supabase
+  useEffect(() => {
+    supabase.auth.getSession().then(({ data: { session } }) => {
+      setUser(session?.user ?? null)
+    })
+
+    const { data: { subscription } } = supabase.auth.onAuthStateChange((_event, session) => {
+      setUser(session?.user ?? null)
+    })
+
+    return () => subscription.unsubscribe()
+  }, [])
 
   useEffect(() => {
     try {
@@ -76,6 +95,12 @@ export default function App() {
     setPage('nosotros')
     setMenuOpen(false)
     requestAnimationFrame(() => document.getElementById('contacto')?.scrollIntoView({ behavior: 'smooth' }))
+  }
+
+  // <-- AÑADIDO: Función para cerrar sesión
+  const handleCerrarSesion = async () => {
+    await supabase.auth.signOut()
+    setUserMenuOpen(false)
   }
 
   return (
@@ -147,15 +172,49 @@ export default function App() {
               <span className={`block w-5 h-px bg-[#f0ede6] transition-all duration-200 ${menuOpen ? 'opacity-0' : ''}`} />
               <span className={`block w-5 h-px bg-[#f0ede6] transition-all duration-200 ${menuOpen ? '-rotate-45 -translate-y-[7px]' : ''}`} />
             </button>
-            <button
-              ref={authTrigger}
-              type="button"
-              onClick={() => { setMenuOpen(false); setAuthOpen(true) }}
-              aria-label="Iniciar sesión o crear cuenta"
-              className="shrink-0 border border-[#8fa882] px-2 py-2 font-mono text-xs uppercase tracking-wide text-[#f0ede6] transition-colors hover:border-[#c5f135] hover:text-[#c5f135] focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-primary sm:px-4 sm:tracking-widest"
-            >
-              <span className="sm:hidden">Entrar</span><span className="hidden sm:inline">Iniciar sesión</span>
-            </button>
+
+            {/* <-- AÑADIDO: Lógica de perfil condicionada --> */}
+            {user ? (
+              <div className="relative">
+                <button
+                  onClick={() => setUserMenuOpen(!userMenuOpen)}
+                  className="w-8 h-8 sm:w-9 sm:h-9 bg-[#c5f135] text-[#080c06] border border-[#8fa882] flex items-center justify-center font-bold text-sm uppercase transition-transform hover:scale-105"
+                >
+                  {user.email?.charAt(0) || 'U'}
+                </button>
+
+                {userMenuOpen && (
+                  <div className="absolute right-0 mt-4 w-48 bg-[#080c06] text-[#8fa882] border border-[#1e2e1a] shadow-xl z-50">
+                    <button className="block w-full text-left px-4 py-3 text-sm font-mono tracking-wider hover:text-[#c5f135] hover:bg-[#1e2e1a] transition-colors">
+                      Mi Perfil
+                    </button>
+                    <button className="block w-full text-left px-4 py-3 text-sm font-mono tracking-wider hover:text-[#c5f135] hover:bg-[#1e2e1a] transition-colors">
+                      Ajustes
+                    </button>
+                    <button className="block w-full text-left px-4 py-3 text-sm font-mono tracking-wider hover:text-[#c5f135] hover:bg-[#1e2e1a] transition-colors">
+                      Seguridad (2FA)
+                    </button>
+                    <div className="border-t border-[#1e2e1a]"></div>
+                    <button
+                      onClick={handleCerrarSesion}
+                      className="block w-full text-left px-4 py-3 text-sm font-mono tracking-wider text-red-500 hover:bg-[#1e2e1a] transition-colors"
+                    >
+                      Cerrar Sesión
+                    </button>
+                  </div>
+                )}
+              </div>
+            ) : (
+              <button
+                ref={authTrigger}
+                type="button"
+                onClick={() => { setMenuOpen(false); setAuthOpen(true) }}
+                aria-label="Iniciar sesión o crear cuenta"
+                className="shrink-0 border border-[#8fa882] px-2 py-2 font-mono text-xs uppercase tracking-wide text-[#f0ede6] transition-colors hover:border-[#c5f135] hover:text-[#c5f135] focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-primary sm:px-4 sm:tracking-widest"
+              >
+                <span className="sm:hidden">Entrar</span><span className="hidden sm:inline">Iniciar sesión</span>
+              </button>
+            )}
           </div>
         </div>
 
