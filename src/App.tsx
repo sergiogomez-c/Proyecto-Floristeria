@@ -1,6 +1,10 @@
+// Componente raíz de la aplicación. Gestiona la navegación, la sesión de Supabase Auth,
+// el catálogo compartido de productos y la sincronización del carrito con Supabase.
+
 import { useEffect, useRef, useState } from 'react'
+import type { User } from '@supabase/supabase-js'
 import Home from './pages/Home'
-import Shop, { PRODUCTS } from './pages/Shop'
+import Shop from './pages/Shop'
 import Botanica from './pages/Botanica'
 import Reservas from './pages/Reservas'
 import Foro from './pages/Foro'
@@ -8,9 +12,26 @@ import SobreNosotros from './pages/SobreNosotros'
 import Patrocinio from './pages/Patrocinio'
 import AuthModal from './components/AuthModal'
 import Carrito from './pages/Carrito'
-import { supabase } from './supabase' // <-- AÑADIDO: Importación de Supabase
+import Perfil from './pages/Perfil'
+import { supabase } from './supabase'
+import { obtenerProductosTienda } from './services/tienda'
+import {
+  cargarCarritoDesdeSupabase,
+  guardarCantidadProductoCarrito,
+  vaciarCarritoEnSupabase,
+} from './services/carrito'
+import type { ProductoTienda } from './types/database'
 
-type Page = 'home' | 'shop' | 'botanica' | 'reservas' | 'foro' | 'nosotros' | 'patrocinio' | 'carrito'
+type Page =
+  | 'home'
+  | 'shop'
+  | 'botanica'
+  | 'reservas'
+  | 'foro'
+  | 'nosotros'
+  | 'patrocinio'
+  | 'carrito'
+  | 'perfil'
 
 const NAV_ITEMS: { id: Page; label: string }[] = [
   { id: 'home', label: 'Inicio' },
@@ -36,48 +57,146 @@ export default function App() {
   const [menuOpen, setMenuOpen] = useState(false)
   const [authOpen, setAuthOpen] = useState(false)
   const authTrigger = useRef<HTMLButtonElement>(null)
-  
-  // <-- AÑADIDO: Estados para el usuario y su menú desplegable
-  const [user, setUser] = useState<any>(null)
+
+  const [user, setUser] = useState<User | null>(null)
   const [userMenuOpen, setUserMenuOpen] = useState(false)
 
-  const [cart, setCart] = useState<number[]>(() => {
-    try {
-      const stored = JSON.parse(localStorage.getItem('deepintheflower-cart') || '[]')
-      return Array.isArray(stored)
-        ? stored.filter((id): id is number => typeof id === 'number' && PRODUCTS.some(product => product.id === id))
-        : []
-    } catch {
-      return []
-    }
-  })
+  const [products, setProducts] = useState<ProductoTienda[]>([])
+  const [productsLoading, setProductsLoading] = useState(true)
+  const [productsError, setProductsError] = useState<string | null>(null)
 
-  // <-- AÑADIDO: El "Radar" de Supabase
+  const [cart, setCart] = useState<number[]>([])
+  const [cartError, setCartError] = useState<string | null>(null)
+  const operaciónCarritoEnCurso = useRef(false)
+
+  async function cargarCatalogoProductos() {
+    setProductsLoading(true)
+    setProductsError(null)
+    try {
+      const lista = await obtenerProductosTienda()
+      setProducts(lista)
+    } catch (err) {
+      setProductsError(
+        err instanceof Error ? err.message : 'Error al cargar los productos.'
+      )
+    } finally {
+      setProductsLoading(false)
+    }
+  }
+
+  useEffect(() => {
+    cargarCatalogoProductos()
+  }, [])
+
+  // Suscripción a la sesión de Supabase Auth
   useEffect(() => {
     supabase.auth.getSession().then(({ data: { session } }) => {
       setUser(session?.user ?? null)
     })
 
-    const { data: { subscription } } = supabase.auth.onAuthStateChange((_event, session) => {
+    const {
+      data: { subscription },
+    } = supabase.auth.onAuthStateChange((_event, session) => {
       setUser(session?.user ?? null)
     })
 
     return () => subscription.unsubscribe()
   }, [])
 
+  // Carga del carrito desde Supabase al iniciar o cambiar de usuario
   useEffect(() => {
-    try {
-      localStorage.setItem('deepintheflower-cart', JSON.stringify(cart))
-    } catch {
-      // The cart still works for this visit if storage is unavailable.
-    }
-  }, [cart])
+    let cancelado = false
+    cargarCarritoDesdeSupabase(user?.id ?? null)
+      .then(ids => {
+        if (!cancelado) {
+          setCart(ids)
+          setCartError(null)
+        }
+      })
+      .catch(err => {
+        if (!cancelado) {
+          setCartError(
+            err instanceof Error ? err.message : 'No se pudo sincronizar la cesta.'
+          )
+        }
+      })
 
-  function removeFromCart(id: number) {
+    return () => {
+      cancelado = true
+    }
+  }, [user?.id])
+
+  async function addToCart(id: number) {
+    if (operaciónCarritoEnCurso.current) return
+    const producto = products.find(p => p.id === id)
+    const cantidadActual = cart.filter(itemId => itemId === id).length
+    if (producto && cantidadActual >= producto.stock) {
+      setCartError(`No hay más unidades en stock de ${producto.name}.`)
+      return
+    }
+
+    operaciónCarritoEnCurso.current = true
+    const nuevaCantidad = cantidadActual + 1
+    const previo = cart
+    setCart(items => [...items, id])
+    setCartError(null)
+
+    try {
+      await guardarCantidadProductoCarrito(user?.id ?? null, id, nuevaCantidad)
+    } catch (err) {
+      setCart(previo)
+      setCartError(
+        err instanceof Error ? err.message : 'No se pudo añadir el producto.'
+      )
+    } finally {
+      operaciónCarritoEnCurso.current = false
+    }
+  }
+
+  async function removeFromCart(id: number) {
+    if (operaciónCarritoEnCurso.current) return
+    const cantidadActual = cart.filter(itemId => itemId === id).length
+    if (cantidadActual === 0) return
+
+    operaciónCarritoEnCurso.current = true
+    const nuevaCantidad = cantidadActual - 1
+    const previo = cart
+
     setCart(items => {
       const index = items.indexOf(id)
       return index < 0 ? items : items.filter((_, position) => position !== index)
     })
+    setCartError(null)
+
+    try {
+      await guardarCantidadProductoCarrito(user?.id ?? null, id, nuevaCantidad)
+    } catch (err) {
+      setCart(previo)
+      setCartError(
+        err instanceof Error ? err.message : 'No se pudo actualizar la cesta.'
+      )
+    } finally {
+      operaciónCarritoEnCurso.current = false
+    }
+  }
+
+  async function clearCart() {
+    if (operaciónCarritoEnCurso.current) return
+    operaciónCarritoEnCurso.current = true
+    const previo = cart
+    setCart([])
+    setCartError(null)
+
+    try {
+      await vaciarCarritoEnSupabase(user?.id ?? null)
+    } catch (err) {
+      setCart(previo)
+      setCartError(
+        err instanceof Error ? err.message : 'No se pudo vaciar la cesta.'
+      )
+    } finally {
+      operaciónCarritoEnCurso.current = false
+    }
   }
 
   function closeAuth() {
@@ -94,13 +213,17 @@ export default function App() {
   function navigateContact() {
     setPage('nosotros')
     setMenuOpen(false)
-    requestAnimationFrame(() => document.getElementById('contacto')?.scrollIntoView({ behavior: 'smooth' }))
+    requestAnimationFrame(() =>
+      document.getElementById('contacto')?.scrollIntoView({ behavior: 'smooth' })
+    )
   }
 
-  // <-- AÑADIDO: Función para cerrar sesión
   const handleCerrarSesion = async () => {
     await supabase.auth.signOut()
     setUserMenuOpen(false)
+    if (page === 'perfil') {
+      setPage('home')
+    }
   }
 
   return (
@@ -128,7 +251,7 @@ export default function App() {
                 key={item.id}
                 onClick={() => navigate(item.id)}
                 className={`font-mono text-xs tracking-widest uppercase px-3 py-2 transition-all duration-150 ${
-                  (page === item.id || (page === 'patrocinio' && item.id === 'nosotros'))
+                  page === item.id || (page === 'patrocinio' && item.id === 'nosotros')
                     ? 'text-[#c5f135]'
                     : 'text-[#8fa882] hover:text-[#f0ede6]'
                 }`}
@@ -173,7 +296,7 @@ export default function App() {
               <span className={`block w-5 h-px bg-[#f0ede6] transition-all duration-200 ${menuOpen ? '-rotate-45 -translate-y-[7px]' : ''}`} />
             </button>
 
-            {/* <-- AÑADIDO: Lógica de perfil condicionada --> */}
+            {/* Lógica de perfil condicionada */}
             {user ? (
               <div className="relative">
                 <button
@@ -185,14 +308,14 @@ export default function App() {
 
                 {userMenuOpen && (
                   <div className="absolute right-0 mt-4 w-48 bg-[#080c06] text-[#8fa882] border border-[#1e2e1a] shadow-xl z-50">
-                    <button className="block w-full text-left px-4 py-3 text-sm font-mono tracking-wider hover:text-[#c5f135] hover:bg-[#1e2e1a] transition-colors">
+                    <button
+                      onClick={() => {
+                        navigate('perfil')
+                        setUserMenuOpen(false)
+                      }}
+                      className="block w-full text-left px-4 py-3 text-sm font-mono tracking-wider hover:text-[#c5f135] hover:bg-[#1e2e1a] transition-colors"
+                    >
                       Mi Perfil
-                    </button>
-                    <button className="block w-full text-left px-4 py-3 text-sm font-mono tracking-wider hover:text-[#c5f135] hover:bg-[#1e2e1a] transition-colors">
-                      Ajustes
-                    </button>
-                    <button className="block w-full text-left px-4 py-3 text-sm font-mono tracking-wider hover:text-[#c5f135] hover:bg-[#1e2e1a] transition-colors">
-                      Seguridad (2FA)
                     </button>
                     <div className="border-t border-[#1e2e1a]"></div>
                     <button
@@ -208,11 +331,15 @@ export default function App() {
               <button
                 ref={authTrigger}
                 type="button"
-                onClick={() => { setMenuOpen(false); setAuthOpen(true) }}
+                onClick={() => {
+                  setMenuOpen(false)
+                  setAuthOpen(true)
+                }}
                 aria-label="Iniciar sesión o crear cuenta"
                 className="shrink-0 border border-[#8fa882] px-2 py-2 font-mono text-xs uppercase tracking-wide text-[#f0ede6] transition-colors hover:border-[#c5f135] hover:text-[#c5f135] focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-primary sm:px-4 sm:tracking-widest"
               >
-                <span className="sm:hidden">Entrar</span><span className="hidden sm:inline">Iniciar sesión</span>
+                <span className="sm:hidden">Entrar</span>
+                <span className="hidden sm:inline">Iniciar sesión</span>
               </button>
             )}
           </div>
@@ -226,7 +353,9 @@ export default function App() {
                 key={item.id}
                 onClick={() => navigate(item.id)}
                 className={`block w-full text-left font-mono text-sm tracking-widest uppercase py-3 border-b border-[#1e2e1a] transition-colors ${
-                  (page === item.id || (page === 'patrocinio' && item.id === 'nosotros')) ? 'text-[#c5f135]' : 'text-[#8fa882]'
+                  page === item.id || (page === 'patrocinio' && item.id === 'nosotros')
+                    ? 'text-[#c5f135]'
+                    : 'text-[#8fa882]'
                 }`}
               >
                 {item.label}
@@ -238,7 +367,9 @@ export default function App() {
                 aria-label={`Abrir carrito, ${cart.length} ${cart.length === 1 ? 'producto' : 'productos'}`}
                 className="flex items-center gap-2 bg-primary px-4 py-3 font-mono text-xs text-ink"
               >
-                <svg aria-hidden="true" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" strokeLinejoin="round" className="h-4 w-4"><path d="M3 9h18l-2 11H5L3 9ZM8 9l4-6 4 6M9 13v4m6-4v4" /></svg>
+                <svg aria-hidden="true" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" strokeLinejoin="round" className="h-4 w-4">
+                  <path d="M3 9h18l-2 11H5L3 9ZM8 9l4-6 4 6M9 13v4m6-4v4" />
+                </svg>
                 {cart.length}
               </button>
               <button
@@ -254,14 +385,48 @@ export default function App() {
 
       {/* Page content */}
       <div className="pt-16">
-        {page === 'home' && <Home onNavigate={navigate} />}
-        {page === 'shop' && <Shop key={shopCategory} cart={cart} onAddToCart={id => setCart(items => [...items, id])} initialCategory={shopCategory} />}
-        {page === 'carrito' && <Carrito cart={cart} onAdd={id => setCart(items => [...items, id])} onRemove={removeFromCart} onClear={() => setCart([])} onNavigate={navigate} />}
+        {cartError && (
+          <div className="border-b border-red-500/40 bg-red-500/10 px-6 py-3 font-mono text-xs text-red-200 flex items-center justify-between">
+            <span>{cartError}</span>
+            <button onClick={() => setCartError(null)} className="underline ml-4">
+              Cerrar
+            </button>
+          </div>
+        )}
+        {page === 'home' && <Home onNavigate={navigate} products={products} />}
+        {page === 'shop' && (
+          <Shop
+            key={shopCategory}
+            products={products}
+            loading={productsLoading}
+            error={productsError}
+            onRetry={cargarCatalogoProductos}
+            cart={cart}
+            onAddToCart={addToCart}
+            initialCategory={shopCategory}
+          />
+        )}
+        {page === 'carrito' && (
+          <Carrito
+            products={products}
+            loading={productsLoading}
+            cart={cart}
+            onAdd={addToCart}
+            onRemove={removeFromCart}
+            onClear={clearCart}
+            onNavigate={navigate}
+          />
+        )}
         {page === 'botanica' && <Botanica />}
-        {page === 'reservas' && <Reservas />}
-        {page === 'foro' && <Foro />}
+        {page === 'reservas' && <Reservas user={user} />}
+        {page === 'foro' && (
+          <Foro user={user} onOpenAuth={() => setAuthOpen(true)} />
+        )}
         {page === 'nosotros' && <SobreNosotros onNavigate={navigate} />}
-        {page === 'patrocinio' && <Patrocinio onNavigate={navigate} />}
+        {page === 'patrocinio' && (
+          <Patrocinio onNavigate={navigate} user={user} />
+        )}
+        {page === 'perfil' && <Perfil />}
       </div>
 
       {/* Footer */}
@@ -269,13 +434,19 @@ export default function App() {
         <div className="grid grid-cols-1 md:grid-cols-4 gap-10">
           <div className="md:col-span-2">
             <div className="flex items-center gap-3 mb-4">
-              <div className="w-8 h-8 bg-[#c5f135] flex items-center justify-center text-[#080c06] font-black"><RoseMark /></div>
-              <span className="font-display font-black text-[#f0ede6] text-xl">DeepInTheFlower</span>
+              <div className="w-8 h-8 bg-[#c5f135] flex items-center justify-center text-[#080c06] font-black">
+                <RoseMark />
+              </div>
+              <span className="font-display font-black text-[#f0ede6] text-xl">
+                DeepInTheFlower
+              </span>
             </div>
             <p className="font-body text-[#8fa882] text-sm leading-relaxed max-w-xs">
               Floristería online con entrega en 48h. Plantas, flores, semillas y decoración floral para cada momento.
             </p>
-            <p className="font-mono text-[#3a4d36] text-xs mt-6">© 2026 DeepInTheFlower · Barcelona</p>
+            <p className="font-mono text-[#3a4d36] text-xs mt-6">
+              © 2026 DeepInTheFlower · Barcelona
+            </p>
           </div>
 
           {[
@@ -283,20 +454,38 @@ export default function App() {
             { title: 'Nosotros', links: ['Sobre nosotros', 'Patrocinio', 'Botánica', 'Foro', 'Contacto'] },
           ].map(col => (
             <div key={col.title}>
-              <p className="font-mono text-[#f0ede6] text-[10px] tracking-widest uppercase mb-4">{col.title}</p>
+              <p className="font-mono text-[#f0ede6] text-[10px] tracking-widest uppercase mb-4">
+                {col.title}
+              </p>
               <ul className="space-y-2">
                 {col.links.map(link => (
                   <li key={link}>
                     {col.title === 'Nosotros' ? (
                       <button
-                        onClick={() => link === 'Contacto' ? navigateContact() : navigate(({ 'Sobre nosotros': 'nosotros', Patrocinio: 'patrocinio', Botánica: 'botanica', Foro: 'foro' } as Record<string, Page>)[link])}
+                        onClick={() =>
+                          link === 'Contacto'
+                            ? navigateContact()
+                            : navigate(
+                                (
+                                  {
+                                    'Sobre nosotros': 'nosotros',
+                                    Patrocinio: 'patrocinio',
+                                    Botánica: 'botanica',
+                                    Foro: 'foro',
+                                  } as Record<string, Page>
+                                )[link]
+                              )
+                        }
                         className="font-body text-[#8fa882] text-sm hover:text-[#c5f135] transition-colors"
                       >
                         {link}
                       </button>
                     ) : (
                       <button
-                        onClick={() => { setShopCategory(link); navigate('shop') }}
+                        onClick={() => {
+                          setShopCategory(link)
+                          navigate('shop')
+                        }}
                         className="font-body text-[#8fa882] text-sm hover:text-[#c5f135] transition-colors"
                       >
                         {link}
@@ -311,7 +500,10 @@ export default function App() {
 
         <div className="mt-10 pt-6 border-t border-[#1e2e1a] flex flex-wrap justify-center gap-3">
           {['Cleber Heber Fabra', 'Sergio Gómez', 'Cristian Salazar'].map(member => (
-            <span key={member} className="font-mono text-[10px] tracking-widest uppercase px-3 py-1 border border-[#1e2e1a] text-[#3a4d36]">
+            <span
+              key={member}
+              className="font-mono text-[10px] tracking-widest uppercase px-3 py-1 border border-[#1e2e1a] text-[#3a4d36]"
+            >
               {member}
             </span>
           ))}

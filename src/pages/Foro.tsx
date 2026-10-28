@@ -1,72 +1,172 @@
-import { useState } from 'react'
+// Página del Foro Verde. Carga categorías, publicaciones y contadores reales desde Supabase,
+// gestiona likes persistentes y sube fotos reales a Supabase Storage.
 
-const CATEGORIES = ['Todo', 'Mis plantas', 'Jardines', 'Proyectos DIY', 'Flores cortadas']
+import { useEffect, useState } from 'react'
+import type { User } from '@supabase/supabase-js'
+import {
+  alternarLikePublicacion,
+  crearPublicacionConImagen,
+  obtenerCategoriasForo,
+  obtenerEstadisticasForo,
+  obtenerPublicacionesForo,
+} from '../services/foro'
+import type { EstadisticasForo, PublicacionForoVista } from '../types/database'
 
-const POSTS = [
-  {
-    id: 1, user: '@verde.urbano', name: 'Carlos M.', cat: 'Mis plantas',
-    title: 'Mi monstera después de 3 años de cuidados',
-    img: 'https://images.unsplash.com/photo-1598559213718-da4a925fbf71?w=500&h=650&fit=crop&auto=format',
-    likes: 284, comments: 31, time: 'hace 2h', tall: true,
-  },
-  {
-    id: 2, user: '@jardin.secreto', name: 'Laia F.',  cat: 'Jardines',
-    title: 'Jardín vertical en el balcón de 6m²',
-    img: 'https://images.unsplash.com/photo-1470058869958-2a77ade41c02?w=500&h=400&fit=crop&auto=format',
-    likes: 193, comments: 18, time: 'hace 5h', tall: false,
-  },
-  {
-    id: 3, user: '@plantmom_bcn', name: 'Sara T.', cat: 'Flores cortadas',
-    title: 'Primera floración de mi orquídea silvestre 🌸',
-    img: 'https://images.unsplash.com/photo-1623183074617-90611646e4ca?w=500&h=620&fit=crop&auto=format',
-    likes: 412, comments: 57, time: 'hace 8h', tall: true,
-  },
-  {
-    id: 4, user: '@roots_bcn', name: 'Tomàs R.', cat: 'Proyectos DIY',
-    title: 'Macetero de cemento hecho en casa',
-    img: 'https://images.unsplash.com/photo-1551970634-747846a548cb?w=500&h=450&fit=crop&auto=format',
-    likes: 167, comments: 22, time: 'hace 1d', tall: false,
-  },
-  {
-    id: 5, user: '@botanica.mia', name: 'Ana S.', cat: 'Mis plantas',
-    title: 'Propagación de suculentas: 6 meses de proceso',
-    img: 'https://images.unsplash.com/photo-1521706862577-47b053587f91?w=500&h=680&fit=crop&auto=format',
-    likes: 338, comments: 44, time: 'hace 2d', tall: true,
-  },
-  {
-    id: 6, user: '@campo_viu', name: 'Jordi P.', cat: 'Jardines',
-    title: 'Remodelación completa del jardín trasero',
-    img: 'https://images.unsplash.com/photo-1525923838299-2312b60f6d69?w=500&h=400&fit=crop&auto=format',
-    likes: 220, comments: 29, time: 'hace 3d', tall: false,
-  },
-  {
-    id: 7, user: '@flor_silv', name: 'Marta C.', cat: 'Flores cortadas',
-    title: 'Composición de peonías para boda íntima',
-    img: 'https://images.unsplash.com/photo-1520179737749-b7752f6f56fb?w=500&h=650&fit=crop&auto=format',
-    likes: 509, comments: 63, time: 'hace 4d', tall: true,
-  },
-  {
-    id: 8, user: '@lavanda_field', name: 'Núria A.', cat: 'Proyectos DIY',
-    title: 'Lavandario en terraza: año 1',
-    img: 'https://images.unsplash.com/photo-1487528742387-d53d4f12488d?w=500&h=400&fit=crop&auto=format',
-    likes: 145, comments: 19, time: 'hace 5d', tall: false,
-  },
-]
+interface CategoriaForoItem {
+  id: number
+  nombre: string
+}
 
-export default function Foro() {
+export default function Foro({
+  user,
+  onOpenAuth,
+}: {
+  user: User | null
+  onOpenAuth: () => void
+}) {
+  const [categories, setCategories] = useState<CategoriaForoItem[]>([])
+  const [posts, setPosts] = useState<PublicacionForoVista[]>([])
+  const [stats, setStats] = useState<EstadisticasForo>({
+    miembrosActivos: 0,
+    totalPublicaciones: 0,
+    totalLikes: 0,
+  })
+  const [loading, setLoading] = useState(true)
+  const [error, setError] = useState<string | null>(null)
+
   const [activeTab, setActiveTab] = useState('Todo')
-  const [likedPosts, setLikedPosts] = useState<Set<number>>(new Set())
   const [showUpload, setShowUpload] = useState(false)
   const [dragging, setDragging] = useState(false)
 
-  const filtered = activeTab === 'Todo' ? POSTS : POSTS.filter(p => p.cat === activeTab)
+  // Estados del formulario de subida
+  const [selectedFile, setSelectedFile] = useState<File | null>(null)
+  const [titleInput, setTitleInput] = useState('')
+  const [selectedCatId, setSelectedCatId] = useState<number>(0)
+  const [uploading, setUploading] = useState(false)
+  const [uploadError, setUploadError] = useState<string | null>(null)
+  const [likeInFlight, setLikeInFlight] = useState<Set<number>>(new Set())
 
-  function toggleLike(id: number) {
-    setLikedPosts(prev => {
-      const next = new Set(prev)
-      next.has(id) ? next.delete(id) : next.add(id)
-      return next
-    })
+  async function cargarDatosForo() {
+    setLoading(true)
+    setError(null)
+    try {
+      const [cats, pubs, estadisticas] = await Promise.all([
+        obtenerCategoriasForo(),
+        obtenerPublicacionesForo(user?.id ?? null),
+        obtenerEstadisticasForo(),
+      ])
+      setCategories(cats)
+      if (cats.length > 0 && selectedCatId === 0) {
+        setSelectedCatId(cats[0].id)
+      }
+      setPosts(pubs)
+      setStats(estadisticas)
+    } catch (err) {
+      setError(
+        err instanceof Error
+          ? err.message
+          : 'No se pudo cargar el contenido del foro.'
+      )
+    } finally {
+      setLoading(false)
+    }
+  }
+
+  useEffect(() => {
+    cargarDatosForo()
+  }, [user?.id])
+
+  const tabNames = ['Todo', ...categories.map(c => c.nombre)]
+  const filtered =
+    activeTab === 'Todo' ? posts : posts.filter(p => p.cat === activeTab)
+
+  async function handleToggleLike(post: PublicacionForoVista) {
+    if (!user) {
+      onOpenAuth()
+      return
+    }
+    if (likeInFlight.has(post.id)) return
+
+    setLikeInFlight(prev => new Set(prev).add(post.id))
+    const estabaMarcado = post.likedByMe
+    const delta = estabaMarcado ? -1 : 1
+
+    setPosts(prev =>
+      prev.map(p =>
+        p.id === post.id
+          ? { ...p, likedByMe: !estabaMarcado, likes: p.likes + delta }
+          : p
+      )
+    )
+    setStats(prev => ({ ...prev, totalLikes: prev.totalLikes + delta }))
+
+    try {
+      await alternarLikePublicacion(user.id, post.id, estabaMarcado)
+    } catch {
+      // Revertir en caso de error
+      setPosts(prev =>
+        prev.map(p =>
+          p.id === post.id
+            ? { ...p, likedByMe: estabaMarcado, likes: p.likes - delta }
+            : p
+        )
+      )
+      setStats(prev => ({ ...prev, totalLikes: prev.totalLikes - delta }))
+    } finally {
+      setLikeInFlight(prev => {
+        const next = new Set(prev)
+        next.delete(post.id)
+        return next
+      })
+    }
+  }
+
+  function handleOpenUpload() {
+    if (!user) {
+      onOpenAuth()
+      return
+    }
+    setUploadError(null)
+    setShowUpload(true)
+  }
+
+  async function handlePublish() {
+    if (!user || uploading) return
+    if (!selectedFile) {
+      setUploadError('Selecciona una imagen para publicar.')
+      return
+    }
+    if (!titleInput.trim()) {
+      setUploadError('Escribe un título para describir tu proyecto.')
+      return
+    }
+    const catId = selectedCatId || categories[0]?.id
+    if (!catId) {
+      setUploadError('Selecciona una categoría válida.')
+      return
+    }
+
+    setUploading(true)
+    setUploadError(null)
+
+    try {
+      await crearPublicacionConImagen({
+        usuarioId: user.id,
+        categoriaId: catId,
+        titulo: titleInput,
+        archivo: selectedFile,
+      })
+      setShowUpload(false)
+      setSelectedFile(null)
+      setTitleInput('')
+      await cargarDatosForo()
+    } catch (err) {
+      setUploadError(
+        err instanceof Error ? err.message : 'Error al subir la publicación.'
+      )
+    } finally {
+      setUploading(false)
+    }
   }
 
   const col1 = filtered.filter((_, i) => i % 3 === 0)
@@ -78,9 +178,12 @@ export default function Foro() {
       {/* Header */}
       <div className="px-6 md:px-12 lg:px-20 pt-16 pb-12 md:pt-24 flex flex-col md:flex-row md:items-end justify-between gap-8">
         <div>
-          <p className="font-mono text-[#c5f135] text-xs tracking-[0.3em] uppercase mb-4">Comunidad botánica</p>
+          <p className="font-mono text-[#c5f135] text-xs tracking-[0.3em] uppercase mb-4">
+            Comunidad botánica
+          </p>
           <h1 className="font-display text-[clamp(3rem,8vw,7rem)] font-black text-[#f0ede6] leading-[0.9]">
-            El foro<br />
+            El foro
+            <br />
             <span className="italic text-[#8fa882]">verde</span>
           </h1>
           <p className="mt-4 font-body text-[#8fa882] max-w-md leading-relaxed">
@@ -88,7 +191,7 @@ export default function Foro() {
           </p>
         </div>
         <button
-          onClick={() => setShowUpload(true)}
+          onClick={handleOpenUpload}
           className="flex-shrink-0 flex items-center gap-3 px-8 py-4 bg-[#c5f135] text-[#080c06] font-mono text-sm tracking-widest uppercase font-medium hover:bg-[#d4ff40] transition-colors"
         >
           <span className="text-lg">+</span> Subir foto
@@ -100,54 +203,108 @@ export default function Foro() {
         <div className="fixed inset-0 bg-[#080c06cc] backdrop-blur-sm z-50 flex items-center justify-center p-6">
           <div className="bg-[#0f1a0c] border border-[#1e2e1a] w-full max-w-lg">
             <div className="flex items-center justify-between px-8 py-5 border-b border-[#1e2e1a]">
-              <h2 className="font-display text-[#f0ede6] text-2xl font-bold">Subir foto</h2>
-              <button onClick={() => setShowUpload(false)} className="font-mono text-[#8fa882] hover:text-[#f0ede6] text-xl">✕</button>
+              <h2 className="font-display text-[#f0ede6] text-2xl font-bold">
+                Subir foto
+              </h2>
+              <button
+                onClick={() => setShowUpload(false)}
+                disabled={uploading}
+                className="font-mono text-[#8fa882] hover:text-[#f0ede6] text-xl"
+              >
+                ✕
+              </button>
             </div>
             <div className="p-8 space-y-5">
               <div
-                className={`border-2 border-dashed transition-colors duration-200 flex flex-col items-center justify-center gap-3 cursor-pointer ${
-                  dragging ? 'border-[#c5f135] bg-[#c5f13510]' : 'border-[#1e2e1a] hover:border-[#3a4d36]'
+                className={`border-2 border-dashed transition-colors duration-200 flex flex-col items-center justify-center gap-3 cursor-pointer p-4 text-center ${
+                  dragging
+                    ? 'border-[#c5f135] bg-[#c5f13510]'
+                    : 'border-[#1e2e1a] hover:border-[#3a4d36]'
                 }`}
                 style={{ height: '200px' }}
-                onDragOver={e => { e.preventDefault(); setDragging(true) }}
+                onDragOver={e => {
+                  e.preventDefault()
+                  setDragging(true)
+                }}
                 onDragLeave={() => setDragging(false)}
-                onDrop={e => { e.preventDefault(); setDragging(false) }}
+                onDrop={e => {
+                  e.preventDefault()
+                  setDragging(false)
+                  const file = e.dataTransfer.files?.[0]
+                  if (file && file.type.startsWith('image/')) {
+                    setSelectedFile(file)
+                  }
+                }}
               >
                 <span className="text-4xl text-[#3a4d36]">⊕</span>
-                <p className="font-body text-[#8fa882] text-sm">Arrastra tu foto aquí o</p>
+                <p className="font-body text-[#8fa882] text-sm">
+                  {selectedFile
+                    ? `Archivo seleccionado: ${selectedFile.name}`
+                    : 'Arrastra tu foto aquí o'}
+                </p>
                 <label className="font-mono text-xs tracking-widest uppercase text-[#c5f135] cursor-pointer hover:underline">
                   Seleccionar archivo
-                  <input type="file" accept="image/*" className="hidden" />
+                  <input
+                    type="file"
+                    accept="image/*"
+                    className="hidden"
+                    disabled={uploading}
+                    onChange={e => {
+                      const file = e.target.files?.[0]
+                      if (file) setSelectedFile(file)
+                    }}
+                  />
                 </label>
               </div>
               <div>
-                <label className="font-mono text-[10px] tracking-widest uppercase text-[#8fa882] block mb-2">Título</label>
+                <label className="font-mono text-[10px] tracking-widest uppercase text-[#8fa882] block mb-2">
+                  Título
+                </label>
                 <input
                   type="text"
+                  value={titleInput}
+                  disabled={uploading}
+                  onChange={e => setTitleInput(e.target.value)}
                   placeholder="Describe tu proyecto..."
                   className="w-full bg-[#080c06] border border-[#1e2e1a] px-4 py-3 text-[#f0ede6] font-body text-sm placeholder:text-[#3a4d36] focus:outline-none focus:border-[#c5f135] transition-colors"
                 />
               </div>
               <div>
-                <label className="font-mono text-[10px] tracking-widest uppercase text-[#8fa882] block mb-2">Categoría</label>
-                <select className="w-full bg-[#080c06] border border-[#1e2e1a] px-4 py-3 text-[#f0ede6] font-body text-sm focus:outline-none focus:border-[#c5f135] transition-colors">
-                  {CATEGORIES.filter(c => c !== 'Todo').map(c => (
-                    <option key={c} value={c}>{c}</option>
+                <label className="font-mono text-[10px] tracking-widest uppercase text-[#8fa882] block mb-2">
+                  Categoría
+                </label>
+                <select
+                  value={selectedCatId}
+                  disabled={uploading}
+                  onChange={e => setSelectedCatId(Number(e.target.value))}
+                  className="w-full bg-[#080c06] border border-[#1e2e1a] px-4 py-3 text-[#f0ede6] font-body text-sm focus:outline-none focus:border-[#c5f135] transition-colors"
+                >
+                  {categories.map(c => (
+                    <option key={c.id} value={c.id}>
+                      {c.nombre}
+                    </option>
                   ))}
                 </select>
               </div>
+              {uploadError && (
+                <p className="border border-red-500/30 bg-red-500/10 p-3 text-xs text-red-200">
+                  {uploadError}
+                </p>
+              )}
               <div className="flex gap-3">
                 <button
                   onClick={() => setShowUpload(false)}
+                  disabled={uploading}
                   className="flex-1 py-3 border border-[#1e2e1a] font-mono text-xs tracking-widest uppercase text-[#8fa882] hover:border-[#f0ede6] hover:text-[#f0ede6] transition-colors"
                 >
                   Cancelar
                 </button>
                 <button
-                  onClick={() => setShowUpload(false)}
-                  className="flex-1 py-3 bg-[#c5f135] text-[#080c06] font-mono text-xs tracking-widest uppercase font-medium hover:bg-[#d4ff40] transition-colors"
+                  onClick={handlePublish}
+                  disabled={uploading}
+                  className="flex-1 py-3 bg-[#c5f135] text-[#080c06] font-mono text-xs tracking-widest uppercase font-medium hover:bg-[#d4ff40] transition-colors disabled:opacity-50"
                 >
-                  Publicar →
+                  {uploading ? 'Publicando...' : 'Publicar →'}
                 </button>
               </div>
             </div>
@@ -157,12 +314,14 @@ export default function Foro() {
 
       {/* Category tabs */}
       <div className="border-y border-[#1e2e1a] flex overflow-x-auto">
-        {CATEGORIES.map(cat => (
+        {tabNames.map(cat => (
           <button
             key={cat}
             onClick={() => setActiveTab(cat)}
             className={`flex-shrink-0 font-mono text-xs tracking-widest uppercase px-6 py-4 border-r border-[#1e2e1a] transition-colors duration-150 ${
-              activeTab === cat ? 'bg-[#c5f135] text-[#080c06]' : 'text-[#8fa882] hover:text-[#f0ede6]'
+              activeTab === cat
+                ? 'bg-[#c5f135] text-[#080c06]'
+                : 'text-[#8fa882] hover:text-[#f0ede6]'
             }`}
           >
             {cat}
@@ -172,26 +331,60 @@ export default function Foro() {
 
       {/* Stats bar */}
       <div className="px-6 md:px-12 lg:px-20 py-5 flex items-center gap-8 border-b border-[#1e2e1a] bg-[#0a100a]">
-        {[['847', 'miembros activos'], ['2.3k', 'publicaciones'], ['12k', 'likes dados']].map(([val, label]) => (
+        {[
+          [String(stats.miembrosActivos), 'miembros activos'],
+          [String(stats.totalPublicaciones), 'publicaciones'],
+          [String(stats.totalLikes), 'likes dados'],
+        ].map(([val, label]) => (
           <div key={label} className="flex items-center gap-2">
-            <span className="font-display text-[#c5f135] font-black text-lg">{val}</span>
-            <span className="font-mono text-[#8fa882] text-[10px] tracking-widest uppercase hidden sm:block">{label}</span>
+            <span className="font-display text-[#c5f135] font-black text-lg">
+              {val}
+            </span>
+            <span className="font-mono text-[#8fa882] text-[10px] tracking-widest uppercase hidden sm:block">
+              {label}
+            </span>
           </div>
         ))}
       </div>
 
       {/* Masonry grid */}
       <div className="px-6 md:px-12 lg:px-20 py-12">
-        {filtered.length === 0 ? (
+        {loading ? (
           <div className="py-32 text-center">
-            <p className="font-display text-[#8fa882] text-3xl italic">Sin publicaciones en esta categoría.</p>
+            <p className="font-mono text-xs uppercase tracking-widest text-[#8fa882]">
+              Cargando publicaciones de la comunidad...
+            </p>
+          </div>
+        ) : error ? (
+          <div className="py-24 text-center max-w-md mx-auto">
+            <p className="font-display text-[#f0ede6] text-2xl mb-3">
+              No se pudo cargar el foro
+            </p>
+            <p className="font-body text-[#8fa882] text-sm mb-6">{error}</p>
+            <button
+              onClick={cargarDatosForo}
+              className="font-mono text-xs tracking-widest uppercase px-6 py-3 bg-[#c5f135] text-[#080c06] hover:bg-[#d4ff40] transition-colors"
+            >
+              Reintentar
+            </button>
+          </div>
+        ) : filtered.length === 0 ? (
+          <div className="py-32 text-center">
+            <p className="font-display text-[#8fa882] text-3xl italic">
+              Sin publicaciones en esta categoría.
+            </p>
           </div>
         ) : (
           <div className="hidden md:grid grid-cols-3 gap-4 items-start">
             {[col1, col2, col3].map((col, ci) => (
               <div key={ci} className="space-y-4">
                 {col.map(post => (
-                  <PostCard key={post.id} post={post} liked={likedPosts.has(post.id)} onLike={() => toggleLike(post.id)} />
+                  <PostCard
+                    key={post.id}
+                    post={post}
+                    liked={post.likedByMe}
+                    onLike={() => handleToggleLike(post)}
+                  />
                 ))}
               </div>
             ))}
@@ -199,24 +392,38 @@ export default function Foro() {
         )}
 
         {/* Mobile: single column */}
-        <div className="md:hidden space-y-4">
-          {filtered.map(post => (
-            <PostCard key={post.id} post={post} liked={likedPosts.has(post.id)} onLike={() => toggleLike(post.id)} />
-          ))}
-        </div>
+        {!loading && !error && (
+          <div className="md:hidden space-y-4">
+            {filtered.map(post => (
+              <PostCard
+                key={post.id}
+                post={post}
+                liked={post.likedByMe}
+                onLike={() => handleToggleLike(post)}
+              />
+            ))}
+          </div>
+        )}
       </div>
     </div>
   )
 }
 
-function PostCard({ post, liked, onLike }: {
-  post: typeof POSTS[0]
+function PostCard({
+  post,
+  liked,
+  onLike,
+}: {
+  post: PublicacionForoVista
   liked: boolean
   onLike: () => void
 }) {
   return (
     <div className="group bg-[#0f1a0c] overflow-hidden cursor-pointer hover:bg-[#111e0f] transition-colors duration-200">
-      <div className="overflow-hidden relative" style={{ aspectRatio: post.tall ? '3/4' : '4/3' }}>
+      <div
+        className="overflow-hidden relative"
+        style={{ aspectRatio: post.tall ? '3/4' : '4/3' }}
+      >
         <img
           src={post.img}
           alt={post.title}
@@ -235,19 +442,28 @@ function PostCard({ post, liked, onLike }: {
           <div className="w-6 h-6 rounded-full bg-[#1e2e1a] flex items-center justify-center">
             <span className="text-[#c5f135] text-[10px]">{post.name[0]}</span>
           </div>
-          <span className="font-mono text-[#c5f135] text-[10px] tracking-widest">{post.user}</span>
-          <span className="font-mono text-[#3a4d36] text-[10px] ml-auto">{post.time}</span>
+          <span className="font-mono text-[#c5f135] text-[10px] tracking-widest">
+            {post.user}
+          </span>
+          <span className="font-mono text-[#3a4d36] text-[10px] ml-auto">
+            {post.time}
+          </span>
         </div>
-        <h3 className="font-display text-[#f0ede6] text-base font-medium leading-tight mb-3">{post.title}</h3>
+        <h3 className="font-display text-[#f0ede6] text-base font-medium leading-tight mb-3">
+          {post.title}
+        </h3>
         <div className="flex items-center gap-4">
           <button
-            onClick={e => { e.stopPropagation(); onLike() }}
+            onClick={e => {
+              e.stopPropagation()
+              onLike()
+            }}
             className={`flex items-center gap-1.5 font-mono text-[10px] tracking-widest transition-colors ${
               liked ? 'text-[#c5f135]' : 'text-[#8fa882] hover:text-[#c5f135]'
             }`}
           >
             <span>{liked ? '♥' : '♡'}</span>
-            {post.likes + (liked ? 1 : 0)}
+            {post.likes}
           </button>
           <button className="flex items-center gap-1.5 font-mono text-[10px] tracking-widest text-[#8fa882] hover:text-[#f0ede6] transition-colors">
             <span>◯</span>

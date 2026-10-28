@@ -1,24 +1,52 @@
-import { useState } from 'react'
+// Página de Tienda. Lee las categorías y los productos reales desde Supabase,
+// respetando la disponibilidad de stock y mostrando errores reales sin listas de respaldo.
 
-const CATEGORIES = ['Todo', 'Flores', 'Plantas', 'Semillas', 'Macetas', 'Herramientas']
+import { useEffect, useState } from 'react'
+import { obtenerCategoriasTienda } from '../services/tienda'
+import type { ProductoTienda } from '../types/database'
 
-export const PRODUCTS = [
-  { id: 1, name: 'Rosa Negra de Halfeti', cat: 'Flores', price: '24,90 €', img: 'https://images.unsplash.com/photo-1612351641432-20a0f196086c?w=600&h=750&fit=crop&auto=format', tag: 'Exclusiva', large: true },
-  { id: 2, name: 'Orquídea Phalaenopsis', cat: 'Flores', price: '18,50 €', img: 'https://images.unsplash.com/photo-1518343161123-c7e9ab4dc4da?w=600&h=750&fit=crop&auto=format', tag: null, large: false },
-  { id: 3, name: 'Monstera Deliciosa XXL', cat: 'Plantas', price: '65,00 €', img: 'https://images.unsplash.com/photo-1598559213718-da4a925fbf71?w=600&h=750&fit=crop&auto=format', tag: 'Más vendida', large: false },
-  { id: 4, name: 'Palma Tropical Areca', cat: 'Plantas', price: '48,00 €', img: 'https://images.unsplash.com/photo-1521706862577-47b053587f91?w=600&h=750&fit=crop&auto=format', tag: null, large: true },
-  { id: 5, name: 'Semillas Lavanda Ecológica', cat: 'Semillas', price: '6,90 €', img: 'https://images.unsplash.com/photo-1487528742387-d53d4f12488d?w=600&h=750&fit=crop&auto=format', tag: 'Nuevo', large: false },
-  { id: 6, name: 'Maceta Terracota Artesanal', cat: 'Macetas', price: '34,00 €', img: 'https://images.unsplash.com/photo-1551970634-747846a548cb?w=600&h=750&fit=crop&auto=format', tag: null, large: false },
-  { id: 7, name: 'Kit Herramientas Bonsái', cat: 'Herramientas', price: '42,00 €', img: 'https://images.unsplash.com/photo-1470058869958-2a77ade41c02?w=600&h=750&fit=crop&auto=format', tag: null, large: false },
-  { id: 8, name: 'Peonía Garden Romance', cat: 'Flores', price: '19,90 €', img: 'https://images.unsplash.com/photo-1520179737749-b7752f6f56fb?w=600&h=750&fit=crop&auto=format', tag: null, large: true },
-  { id: 9, name: 'Ficus Lyrata', cat: 'Plantas', price: '55,00 €', img: 'https://images.unsplash.com/photo-1525923838299-2312b60f6d69?w=600&h=750&fit=crop&auto=format', tag: 'Nuevo', large: false },
-]
+interface ShopProps {
+  products: ProductoTienda[]
+  loading: boolean
+  error: string | null
+  onRetry: () => void
+  cart: number[]
+  onAddToCart: (id: number) => void
+  initialCategory?: string
+}
 
-export default function Shop({ cart, onAddToCart, initialCategory = 'Todo' }: { cart: number[]; onAddToCart: (id: number) => void; initialCategory?: string }) {
+export default function Shop({
+  products,
+  loading,
+  error,
+  onRetry,
+  cart,
+  onAddToCart,
+  initialCategory = 'Todo',
+}: ShopProps) {
+  const [categories, setCategories] = useState<string[]>([
+    'Todo',
+    'Flores',
+    'Plantas',
+    'Semillas',
+    'Macetas',
+    'Herramientas',
+  ])
   const [active, setActive] = useState(initialCategory)
   const [addedId, setAddedId] = useState<number | null>(null)
 
-  const filtered = active === 'Todo' ? PRODUCTS : PRODUCTS.filter(p => p.cat === active)
+  useEffect(() => {
+    obtenerCategoriasTienda()
+      .then(lista => {
+        if (lista.length > 1) setCategories(lista)
+      })
+      .catch(() => {
+        // Si falla la lectura de categorías secundarias, el error principal se muestra en el catálogo
+      })
+  }, [])
+
+  const filtered =
+    active === 'Todo' ? products : products.filter(p => p.cat === active)
 
   function addToCart(id: number) {
     onAddToCart(id)
@@ -30,15 +58,20 @@ export default function Shop({ cart, onAddToCart, initialCategory = 'Todo' }: { 
     <div className="min-h-screen bg-[#080c06] pt-8">
       {/* Header */}
       <div className="px-6 md:px-12 lg:px-20 py-16 md:py-24">
-        <p className="font-mono text-[#c5f135] text-xs tracking-[0.3em] uppercase mb-4">Catálogo completo</p>
+        <p className="font-mono text-[#c5f135] text-xs tracking-[0.3em] uppercase mb-4">
+          Catálogo completo
+        </p>
         <div className="flex flex-col md:flex-row md:items-end justify-between gap-6">
           <h1 className="font-display text-[clamp(3rem,8vw,7rem)] font-black text-[#f0ede6] leading-[0.9]">
-            La<br />
+            La
+            <br />
             <span className="italic text-[#8fa882]">tienda</span>
           </h1>
           <div className="flex items-center gap-3">
             <div className="w-2 h-2 rounded-full bg-[#c5f135]" />
-            <span className="font-mono text-[#8fa882] text-sm">{cart.length} en el carrito</span>
+            <span className="font-mono text-[#8fa882] text-sm">
+              {cart.length} en el carrito
+            </span>
           </div>
         </div>
       </div>
@@ -46,7 +79,7 @@ export default function Shop({ cart, onAddToCart, initialCategory = 'Todo' }: { 
       {/* Filter bar */}
       <div className="px-6 md:px-12 lg:px-20 border-y border-[#1e2e1a]">
         <div className="flex gap-0 overflow-x-auto -mx-6 px-6 md:mx-0 md:px-0">
-          {CATEGORIES.map(cat => (
+          {categories.map(cat => (
             <button
               key={cat}
               onClick={() => setActive(cat)}
@@ -64,54 +97,98 @@ export default function Shop({ cart, onAddToCart, initialCategory = 'Todo' }: { 
 
       {/* Product grid */}
       <div className="px-6 md:px-12 lg:px-20 py-12 md:py-16">
-        <div className="columns-1 sm:columns-2 lg:columns-3 gap-4">
-          {filtered.map(product => (
-            <div
-              key={product.id}
-              className="group relative break-inside-avoid mb-4 overflow-hidden bg-[#0f1a0c] cursor-pointer"
-            >
-              <div
-                className="overflow-hidden"
-                style={{ aspectRatio: product.large ? '3/4' : '4/5' }}
-              >
-                <img
-                  src={product.img}
-                  alt={product.name}
-                  className="w-full h-full object-cover transition-transform duration-700 group-hover:scale-105 opacity-70 group-hover:opacity-90"
-                />
-              </div>
-
-              {product.tag && (
-                <div className="absolute top-4 left-4 font-mono text-[10px] tracking-widest uppercase px-3 py-1 bg-[#c5f135] text-[#080c06]">
-                  {product.tag}
-                </div>
-              )}
-
-              <div className="p-5">
-                <p className="font-mono text-[#8fa882] text-[10px] tracking-widest uppercase mb-1">{product.cat}</p>
-                <h3 className="font-display text-[#f0ede6] text-xl font-medium">{product.name}</h3>
-                <div className="flex items-center justify-between mt-4">
-                  <span className="font-display text-[#c5f135] text-2xl font-black">{product.price}</span>
-                  <button
-                    onClick={() => addToCart(product.id)}
-                    className={`font-mono text-xs tracking-widest uppercase px-4 py-2 transition-all duration-200 ${
-                      addedId === product.id
-                        ? 'bg-[#c5f135] text-[#080c06]'
-                        : 'border border-[#1e2e1a] text-[#8fa882] hover:border-[#c5f135] hover:text-[#c5f135]'
-                    }`}
-                  >
-                    {addedId === product.id ? '✓ Añadido' : '+ Añadir'}
-                  </button>
-                </div>
-              </div>
-            </div>
-          ))}
-        </div>
-
-        {filtered.length === 0 && (
+        {loading ? (
           <div className="py-32 text-center">
-            <p className="font-display text-[#8fa882] text-3xl italic">Sin productos en esta categoría aún.</p>
+            <p className="font-mono text-xs uppercase tracking-widest text-[#8fa882]">
+              Cargando catálogo desde Supabase...
+            </p>
           </div>
+        ) : error ? (
+          <div className="py-24 text-center max-w-md mx-auto">
+            <p className="font-display text-[#f0ede6] text-2xl mb-3">
+              No se pudo cargar el catálogo
+            </p>
+            <p className="font-body text-[#8fa882] text-sm mb-6">{error}</p>
+            <button
+              onClick={onRetry}
+              className="font-mono text-xs tracking-widest uppercase px-6 py-3 bg-[#c5f135] text-[#080c06] hover:bg-[#d4ff40] transition-colors"
+            >
+              Reintentar
+            </button>
+          </div>
+        ) : (
+          <>
+            <div className="columns-1 sm:columns-2 lg:columns-3 gap-4">
+              {filtered.map(product => {
+                const enCarrito = cart.filter(id => id === product.id).length
+                const sinStock = product.stock <= 0 || enCarrito >= product.stock
+                return (
+                  <div
+                    key={product.id}
+                    className="group relative break-inside-avoid mb-4 overflow-hidden bg-[#0f1a0c] cursor-pointer"
+                  >
+                    <div
+                      className="overflow-hidden"
+                      style={{ aspectRatio: product.large ? '3/4' : '4/5' }}
+                    >
+                      <img
+                        src={product.img}
+                        alt={product.name}
+                        className="w-full h-full object-cover transition-transform duration-700 group-hover:scale-105 opacity-70 group-hover:opacity-90"
+                      />
+                    </div>
+
+                    {product.tag && (
+                      <div className="absolute top-4 left-4 font-mono text-[10px] tracking-widest uppercase px-3 py-1 bg-[#c5f135] text-[#080c06]">
+                        {product.tag}
+                      </div>
+                    )}
+
+                    <div className="p-5">
+                      <p className="font-mono text-[#8fa882] text-[10px] tracking-widest uppercase mb-1">
+                        {product.cat}
+                      </p>
+                      <h3 className="font-display text-[#f0ede6] text-xl font-medium">
+                        {product.name}
+                      </h3>
+                      <div className="flex items-center justify-between mt-4">
+                        <span className="font-display text-[#c5f135] text-2xl font-black">
+                          {product.priceFormatted}
+                        </span>
+                        <button
+                          onClick={() => addToCart(product.id)}
+                          disabled={sinStock}
+                          className={`font-mono text-xs tracking-widest uppercase px-4 py-2 transition-all duration-200 ${
+                            addedId === product.id
+                              ? 'bg-[#c5f135] text-[#080c06]'
+                              : sinStock
+                              ? 'border border-[#1e2e1a] text-[#3a4d36] cursor-not-allowed'
+                              : 'border border-[#1e2e1a] text-[#8fa882] hover:border-[#c5f135] hover:text-[#c5f135]'
+                          }`}
+                        >
+                          {addedId === product.id
+                            ? '✓ Añadido'
+                            : product.stock <= 0
+                            ? 'Agotado'
+                            : sinStock
+                            ? 'Máx. stock'
+                            : '+ Añadir'}
+                        </button>
+                      </div>
+                    </div>
+                  </div>
+                )
+              })}
+            </div>
+
+            {filtered.length === 0 && (
+              <div className="py-32 text-center">
+                <p className="font-display text-[#8fa882] text-3xl italic">
+                  Sin productos en esta categoría aún.
+                </p>
+              </div>
+            )}
+          </>
         )}
       </div>
     </div>
