@@ -1,6 +1,7 @@
 // Componente raíz de la aplicación. Gestiona la navegación, la sesión de Supabase Auth,
 // el catálogo compartido de productos y la sincronización del carrito con Supabase.
 
+import Ajustes from './pages/Ajustes'
 import { useEffect, useRef, useState } from 'react'
 import type { User } from '@supabase/supabase-js'
 import Home from './pages/Home'
@@ -32,6 +33,7 @@ type Page =
   | 'patrocinio'
   | 'carrito'
   | 'perfil'
+  | 'ajustes'
 
 const NAV_ITEMS: { id: Page; label: string }[] = [
   { id: 'home', label: 'Inicio' },
@@ -221,7 +223,7 @@ export default function App() {
   const handleCerrarSesion = async () => {
     await supabase.auth.signOut()
     setUserMenuOpen(false)
-    if (page === 'perfil') {
+    if (page === 'perfil' || page === 'ajustes') {
       setPage('home')
     }
   }
@@ -316,6 +318,15 @@ export default function App() {
                       className="block w-full text-left px-4 py-3 text-sm font-mono tracking-wider hover:text-[#c5f135] hover:bg-[#1e2e1a] transition-colors"
                     >
                       Mi Perfil
+                    </button>
+                    <button
+                      onClick={() => {
+                        navigate('ajustes')
+                        setUserMenuOpen(false)
+                      }}
+                      className="block w-full text-left px-4 py-3 text-sm font-mono tracking-wider hover:text-[#c5f135] hover:bg-[#1e2e1a] transition-colors"
+                    >
+                      Ajustes
                     </button>
                     <div className="border-t border-[#1e2e1a]"></div>
                     <button
@@ -427,6 +438,7 @@ export default function App() {
           <Patrocinio onNavigate={navigate} user={user} />
         )}
         {page === 'perfil' && <Perfil />}
+        {page === 'ajustes' && <Ajustes user={user} />}
       </div>
 
       {/* Footer */}

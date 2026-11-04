@@ -142,22 +142,6 @@ export default function Perfil() {
     setTimeout(() => setMensajeBio(''), 2000)
   }
 
-  async function togglePrivacidad() {
-    if (!userAuth) return
-    const previo = perfilPrivado
-    const nuevoEstado = !previo
-    setPerfilPrivado(nuevoEstado)
-
-    const { error } = await supabase
-      .from('usuarios')
-      .update({ perfil_privado: nuevoEstado })
-      .eq('id', userAuth.id)
-
-    if (error) {
-      setPerfilPrivado(previo)
-    }
-  }
-
   if (!userAuth) {
     return (
       <div className="p-20 text-center text-[#8fa882]">Cargando perfil...</div>
@@ -291,21 +275,9 @@ export default function Perfil() {
               </div>
 
               <div className="ml-auto flex items-center gap-3">
-                <span className="text-xs text-[#8fa882] font-mono">
+                <span className="text-xs text-[#8fa882] font-mono border border-[#1e2e1a] px-3 py-1 bg-[#1e2e1a] rounded">
                   {perfilPrivado ? 'Perfil Privado' : 'Perfil Público'}
                 </span>
-                <button
-                  onClick={togglePrivacidad}
-                  className={`w-12 h-6 rounded-full p-1 transition-colors ${
-                    perfilPrivado ? 'bg-[#c5f135]' : 'bg-[#1e2e1a]'
-                  }`}
-                >
-                  <div
-                    className={`w-4 h-4 bg-[#080c06] rounded-full transition-transform ${
-                      perfilPrivado ? 'translate-x-6' : 'translate-x-0'
-                    }`}
-                  />
-                </button>
               </div>
             </div>
 

@@ -96,6 +96,13 @@ export interface PerfilUsuario {
   activo: boolean
   biografia: string | null
   perfil_privado: boolean
+  direccion: string | null
+  ciudad: string | null
+  codigo_postal: string | null
+  notificaciones_ofertas: boolean
+  notificaciones_foro: boolean
+  mostrar_wishlist: boolean
+  mostrar_likes: boolean
 }
 
 export interface PedidoResumen {
