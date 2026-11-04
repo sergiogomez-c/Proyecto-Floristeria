@@ -5,7 +5,7 @@ import type { PerfilUsuario } from '../types/database'
 
 type Pestana = 'cuenta' | 'direccion' | 'privacidad' | 'notificaciones'
 
-export default function Ajustes({ user }: { user: User | null }) {
+export default function Ajustes({ user, onNavigate }: { user: User | null, onNavigate: (page: string) => void }) {
   const [activeTab, setActiveTab] = useState<Pestana>('cuenta')
   const [perfil, setPerfil] = useState<PerfilUsuario | null>(null)
   const [loading, setLoading] = useState(true)
@@ -102,9 +102,8 @@ export default function Ajustes({ user }: { user: User | null }) {
 
   async function cerrarTodasLasSesiones() {
     setSaving(true)
-    // Esto invalida la sesión actual y cualquier otra abierta en otros dispositivos
     await supabase.auth.signOut({ scope: 'global' })
-    // La redirección la maneja App.tsx al detectar que no hay sesión
+    onNavigate('home') 
   }
 
   if (!user || loading) {

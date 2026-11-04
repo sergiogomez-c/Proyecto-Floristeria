@@ -438,7 +438,7 @@ export default function App() {
           <Patrocinio onNavigate={navigate} user={user} />
         )}
         {page === 'perfil' && <Perfil />}
-        {page === 'ajustes' && <Ajustes user={user} />}
+        {page === 'ajustes' && <Ajustes user={user} onNavigate={navigate} />}
       </div>
 
       {/* Footer */}
