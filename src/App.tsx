@@ -1,6 +1,7 @@
 // Componente raíz de la aplicación. Gestiona la navegación, la sesión de Supabase Auth,
 // el catálogo compartido de productos y la sincronización del carrito con Supabase.
 
+import WishlistPage from './pages/WishlistPage'
 import Ajustes from './pages/Ajustes'
 import { useEffect, useRef, useState } from 'react'
 import type { User } from '@supabase/supabase-js'
@@ -34,6 +35,7 @@ type Page =
   | 'carrito'
   | 'perfil'
   | 'ajustes'
+  | 'wishlist'
 
 const NAV_ITEMS: { id: Page; label: string }[] = [
   { id: 'home', label: 'Inicio' },
@@ -437,7 +439,8 @@ export default function App() {
         {page === 'patrocinio' && (
           <Patrocinio onNavigate={navigate} user={user} />
         )}
-        {page === 'perfil' && <Perfil />}
+        {page === 'perfil' && <Perfil onNavigate={navigate} />}
+        {page === 'wishlist' && <WishlistPage user={user} products={products} cart={cart} onAddToCart={addToCart} onNavigate={navigate} />}
         {page === 'ajustes' && <Ajustes user={user} onNavigate={navigate} />}
       </div>
 

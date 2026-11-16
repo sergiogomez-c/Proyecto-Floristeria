@@ -67,6 +67,7 @@ export interface PublicacionForoVista {
   time: string
   tall: boolean
   likedByMe: boolean
+  usuario_id: string
 }
 
 export interface EstadisticasForo {

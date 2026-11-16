@@ -10,7 +10,7 @@ import type {
   PerfilUsuario,
 } from '../types/database'
 
-export default function Perfil() {
+export default function Perfil({ onNavigate }: { onNavigate: (page: string) => void }) {
   const [userAuth, setUserAuth] = useState<User | null>(null)
   const [datosPerfil, setDatosPerfil] = useState<PerfilUsuario | null>(null)
 
@@ -329,9 +329,13 @@ export default function Perfil() {
             </div>
 
             <div className="bg-[#080c06] border border-[#1e2e1a] p-6">
-              <h3 className="text-[#c5f135] font-mono text-xs uppercase tracking-widest mb-4">
+              <button
+                onClick={() => onNavigate('wishlist')}
+                className="text-[#c5f135] font-mono text-xs uppercase tracking-widest mb-4 hover:underline flex items-center gap-2 transition-all hover:text-[#d4ff40]"
+              >
                 Lista de Deseos
-              </h3>
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" className="w-3 h-3"><path d="M5 12h14M12 5l7 7-7 7" /></svg>
+              </button>
               {wishlist.length === 0 ? (
                 <p className="text-[#8fa882] text-sm">
                   Tu lista de deseos está vacía.

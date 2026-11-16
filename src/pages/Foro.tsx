@@ -1,14 +1,17 @@
 // Página del Foro Verde. Carga categorías, publicaciones y contadores reales desde Supabase,
-// gestiona likes persistentes y sube fotos reales a Supabase Storage.
+// gestiona likes persistentes (pulgar arriba) y sube fotos reales a Supabase Storage.
+// Incluye sistema funcional de comentarios conectados a la tabla 'comentarios'.
 
 import { useEffect, useState } from 'react'
 import type { User } from '@supabase/supabase-js'
+import { supabase } from '../supabase'
 import {
   alternarLikePublicacion,
   crearPublicacionConImagen,
   obtenerCategoriasForo,
   obtenerEstadisticasForo,
   obtenerPublicacionesForo,
+  eliminarPublicacion,
 } from '../services/foro'
 import type { EstadisticasForo, PublicacionForoVista } from '../types/database'
 
@@ -46,27 +49,34 @@ export default function Foro({
   const [uploadError, setUploadError] = useState<string | null>(null)
   const [likeInFlight, setLikeInFlight] = useState<Set<number>>(new Set())
 
+  // Estados para los comentarios
+  const [activePostForComments, setActivePostForComments] = useState<PublicacionForoVista | null>(null)
+  const [comentarios, setComentarios] = useState<{ id: number, texto: string, usuario: string, fecha: string }[]>([])
+  const [nuevoComentario, setNuevoComentario] = useState('')
+  const [loadingComentarios, setLoadingComentarios] = useState(false)
+
   async function cargarDatosForo() {
     setLoading(true)
     setError(null)
     try {
-      const [cats, pubs, estadisticas] = await Promise.all([
-        obtenerCategoriasForo(),
-        obtenerPublicacionesForo(user?.id ?? null),
-        obtenerEstadisticasForo(),
-      ])
+      const cats = await obtenerCategoriasForo()
       setCategories(cats)
       if (cats.length > 0 && selectedCatId === 0) {
         setSelectedCatId(cats[0].id)
       }
+    } catch (err) {
+      console.error("Fallo al cargar categorías:", err)
+    }
+
+    try {
+      const pubs = await obtenerPublicacionesForo(user?.id ?? null)
+      const estadisticas = await obtenerEstadisticasForo()
+
       setPosts(pubs)
       setStats(estadisticas)
-    } catch (err) {
-      setError(
-        err instanceof Error
-          ? err.message
-          : 'No se pudo cargar el contenido del foro.'
-      )
+    } catch (err: any) {
+      console.error("Error detallado de Supabase:", err);
+      setError(`Error de base de datos: ${err.message || JSON.stringify(err)}`)
     } finally {
       setLoading(false)
     }
@@ -75,6 +85,15 @@ export default function Foro({
   useEffect(() => {
     cargarDatosForo()
   }, [user?.id])
+
+  useEffect(() => {
+    if (showUpload || activePostForComments) {
+      document.body.style.overflow = 'hidden'
+    } else {
+      document.body.style.overflow = 'unset'
+    }
+    return () => { document.body.style.overflow = 'unset' }
+  }, [showUpload, activePostForComments])
 
   const tabNames = ['Todo', ...categories.map(c => c.nombre)]
   const filtered =
@@ -121,6 +140,19 @@ export default function Foro({
     }
   }
 
+  async function handleDeletePost(post: PublicacionForoVista) {
+    if (!window.confirm('¿Seguro que quieres borrar esta publicación? Esta acción no se puede deshacer.')) return;
+    
+    try {
+      await eliminarPublicacion(post.id)
+      // Lo quitamos de la pantalla al instante
+      setPosts(prev => prev.filter(p => p.id !== post.id))
+      setStats(prev => ({ ...prev, totalPublicaciones: prev.totalPublicaciones - 1 }))
+    } catch (err) {
+      alert("No se pudo borrar: " + (err as Error).message)
+    }
+  }
+
   function handleOpenUpload() {
     if (!user) {
       onOpenAuth()
@@ -159,7 +191,7 @@ export default function Foro({
       setShowUpload(false)
       setSelectedFile(null)
       setTitleInput('')
-      await cargarDatosForo()
+      await cargarDatosForo() // Recargamos para ver el post nuevo
     } catch (err) {
       setUploadError(
         err instanceof Error ? err.message : 'Error al subir la publicación.'
@@ -169,12 +201,73 @@ export default function Foro({
     }
   }
 
+  // --- LÓGICA DE COMENTARIOS ---
+  async function abrirComentarios(post: PublicacionForoVista) {
+    if (!user) {
+      onOpenAuth()
+      return
+    }
+    setActivePostForComments(post)
+    setLoadingComentarios(true)
+    setComentarios([])
+
+    // Cargar comentarios reales de Supabase
+    const { data, error } = await supabase
+      .from('comentarios')
+      .select('id, texto, creado_en, usuarios(nombre)')
+      .eq('publicacion_id', post.id)
+      .order('creado_en', { ascending: true })
+
+    if (!error && data) {
+      setComentarios(data.map(c => ({
+        id: c.id,
+        texto: c.texto,
+        usuario: Array.isArray(c.usuarios) ? c.usuarios[0]?.nombre || 'Usuario' : (c.usuarios as any)?.nombre || 'Usuario',
+        fecha: new Date(c.creado_en).toLocaleDateString('es-ES', { day: 'numeric', month: 'short' })
+      })))
+    }
+    setLoadingComentarios(false)
+  }
+
+  async function enviarComentario(e: React.FormEvent) {
+    e.preventDefault()
+    if (!user || !activePostForComments || !nuevoComentario.trim()) return
+
+    const textoGuardar = nuevoComentario
+    setNuevoComentario('') // Limpiar input rápido para UX
+
+    const { data, error } = await supabase
+      .from('comentarios')
+      .insert({
+        publicacion_id: activePostForComments.id,
+        usuario_id: user.id,
+        texto: textoGuardar
+      })
+      .select('id, texto, creado_en, usuarios(nombre)')
+      .single()
+
+    if (!error && data) {
+      // Actualizamos la lista local del modal
+      setComentarios(prev => [...prev, {
+        id: data.id,
+        texto: data.texto,
+        usuario: Array.isArray(data.usuarios) ? data.usuarios[0]?.nombre || 'Yo' : (data.usuarios as any)?.nombre || 'Yo',
+        fecha: 'Ahora mismo'
+      }])
+
+      // Actualizamos el contador visual en el muro principal
+      setPosts(prev => prev.map(p =>
+        p.id === activePostForComments.id ? { ...p, comments: p.comments + 1 } : p
+      ))
+    }
+  }
+
   const col1 = filtered.filter((_, i) => i % 3 === 0)
   const col2 = filtered.filter((_, i) => i % 3 === 1)
   const col3 = filtered.filter((_, i) => i % 3 === 2)
 
   return (
-    <div className="min-h-screen bg-[#080c06]">
+    <div className="min-h-screen bg-[#080c06] relative">
       {/* Header */}
       <div className="px-6 md:px-12 lg:px-20 pt-16 pb-12 md:pt-24 flex flex-col md:flex-row md:items-end justify-between gap-8">
         <div>
@@ -216,11 +309,10 @@ export default function Foro({
             </div>
             <div className="p-8 space-y-5">
               <div
-                className={`border-2 border-dashed transition-colors duration-200 flex flex-col items-center justify-center gap-3 cursor-pointer p-4 text-center ${
-                  dragging
-                    ? 'border-[#c5f135] bg-[#c5f13510]'
-                    : 'border-[#1e2e1a] hover:border-[#3a4d36]'
-                }`}
+                className={`border-2 border-dashed transition-colors duration-200 flex flex-col items-center justify-center gap-3 cursor-pointer p-4 text-center ${dragging
+                  ? 'border-[#c5f135] bg-[#c5f13510]'
+                  : 'border-[#1e2e1a] hover:border-[#3a4d36]'
+                  }`}
                 style={{ height: '200px' }}
                 onDragOver={e => {
                   e.preventDefault()
@@ -279,6 +371,7 @@ export default function Foro({
                   onChange={e => setSelectedCatId(Number(e.target.value))}
                   className="w-full bg-[#080c06] border border-[#1e2e1a] px-4 py-3 text-[#f0ede6] font-body text-sm focus:outline-none focus:border-[#c5f135] transition-colors"
                 >
+                  <option value={0} disabled>Selecciona una categoría...</option>
                   {categories.map(c => (
                     <option key={c.id} value={c.id}>
                       {c.nombre}
@@ -312,17 +405,86 @@ export default function Foro({
         </div>
       )}
 
+      {/* Modal de Comentarios */}
+      {activePostForComments && (
+        <div className="fixed inset-0 bg-[#080c06cc] backdrop-blur-sm z-50 flex items-center justify-center p-6">
+          <div className="bg-[#0f1a0c] border border-[#1e2e1a] w-full max-w-2xl max-h-[85vh] flex flex-col">
+            <div className="flex items-center justify-between px-8 py-5 border-b border-[#1e2e1a] shrink-0">
+              <h2 className="font-display text-[#f0ede6] text-2xl font-bold">
+                Comentarios
+              </h2>
+              <button
+                onClick={() => setActivePostForComments(null)}
+                className="font-mono text-[#8fa882] hover:text-[#f0ede6] text-xl"
+              >
+                ✕
+              </button>
+            </div>
+
+            <div className="p-8 flex flex-col md:flex-row gap-8 overflow-hidden h-full">
+              {/* Foto del post para dar contexto (Oculta en móvil muy pequeño) */}
+              <div className="hidden md:block w-1/3 shrink-0">
+                <img src={activePostForComments.img} alt="Post" className="w-full aspect-[4/5] object-cover border border-[#1e2e1a]" />
+                <p className="mt-3 font-display text-[#f0ede6] text-lg leading-tight">{activePostForComments.title}</p>
+                <p className="font-mono text-[#8fa882] text-[10px] mt-1 uppercase tracking-widest">De: {activePostForComments.user}</p>
+              </div>
+
+              <div className="flex-1 flex flex-col h-full min-h-[300px]">
+                {/* Lista de comentarios */}
+                <div className="flex-1 overflow-y-auto pr-2 space-y-5 mb-4">
+                  {loadingComentarios ? (
+                    <p className="text-center font-mono text-[#8fa882] text-xs py-10 uppercase tracking-widest">Cargando debate...</p>
+                  ) : comentarios.length === 0 ? (
+                    <div className="h-full flex flex-col items-center justify-center text-center py-10">
+                      <p className="font-display text-[#8fa882] text-xl italic mb-2">Sé el primero en comentar</p>
+                      <p className="font-mono text-[#3a4d36] text-[10px] uppercase tracking-widest">Rompe el hielo botánico</p>
+                    </div>
+                  ) : (
+                    comentarios.map(c => (
+                      <div key={c.id} className="bg-[#080c06] p-4 border border-[#1e2e1a]">
+                        <div className="flex justify-between items-start mb-2">
+                          <span className="font-mono text-[#c5f135] text-[10px] tracking-widest uppercase">{c.usuario}</span>
+                          <span className="font-mono text-[#3a4d36] text-[10px]">{c.fecha}</span>
+                        </div>
+                        <p className="font-body text-[#f0ede6] text-sm">{c.texto}</p>
+                      </div>
+                    ))
+                  )}
+                </div>
+
+                {/* Formulario para comentar */}
+                <form onSubmit={enviarComentario} className="shrink-0 flex gap-3 pt-4 border-t border-[#1e2e1a]">
+                  <input
+                    type="text"
+                    value={nuevoComentario}
+                    onChange={(e) => setNuevoComentario(e.target.value)}
+                    placeholder="Escribe tu comentario..."
+                    className="flex-1 bg-[#080c06] border border-[#1e2e1a] px-4 py-3 text-[#f0ede6] font-body text-sm focus:outline-none focus:border-[#c5f135]"
+                  />
+                  <button
+                    type="submit"
+                    disabled={!nuevoComentario.trim()}
+                    className="bg-[#c5f135] text-[#080c06] px-6 font-mono text-xs uppercase tracking-widest font-bold hover:bg-[#d4ff40] disabled:opacity-50 transition-colors"
+                  >
+                    Enviar
+                  </button>
+                </form>
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
+
       {/* Category tabs */}
       <div className="border-y border-[#1e2e1a] flex overflow-x-auto">
         {tabNames.map(cat => (
           <button
             key={cat}
             onClick={() => setActiveTab(cat)}
-            className={`flex-shrink-0 font-mono text-xs tracking-widest uppercase px-6 py-4 border-r border-[#1e2e1a] transition-colors duration-150 ${
-              activeTab === cat
-                ? 'bg-[#c5f135] text-[#080c06]'
-                : 'text-[#8fa882] hover:text-[#f0ede6]'
-            }`}
+            className={`flex-shrink-0 font-mono text-xs tracking-widest uppercase px-6 py-4 border-r border-[#1e2e1a] transition-colors duration-150 ${activeTab === cat
+              ? 'bg-[#c5f135] text-[#080c06]'
+              : 'text-[#8fa882] hover:text-[#f0ede6]'
+              }`}
           >
             {cat}
           </button>
@@ -384,6 +546,9 @@ export default function Foro({
                     post={post}
                     liked={post.likedByMe}
                     onLike={() => handleToggleLike(post)}
+                    onComment={() => abrirComentarios(post)}
+                    isOwner={user?.id === post.usuario_id}
+                    onDelete={() => handleDeletePost(post)}
                   />
                 ))}
               </div>
@@ -400,6 +565,9 @@ export default function Foro({
                 post={post}
                 liked={post.likedByMe}
                 onLike={() => handleToggleLike(post)}
+                onComment={() => abrirComentarios(post)}
+                isOwner={user?.id === post.usuario_id}
+                onDelete={() => handleDeletePost(post)}
               />
             ))}
           </div>
@@ -413,13 +581,19 @@ function PostCard({
   post,
   liked,
   onLike,
+  onComment,
+  isOwner,
+  onDelete
 }: {
   post: PublicacionForoVista
   liked: boolean
   onLike: () => void
+  onComment: () => void
+  isOwner: boolean
+  onDelete: () => void
 }) {
   return (
-    <div className="group bg-[#0f1a0c] overflow-hidden cursor-pointer hover:bg-[#111e0f] transition-colors duration-200">
+    <div className="group bg-[#0f1a0c] overflow-hidden hover:bg-[#111e0f] transition-colors duration-200 border border-[#1e2e1a]">
       <div
         className="overflow-hidden relative"
         style={{ aspectRatio: post.tall ? '3/4' : '4/3' }}
@@ -431,10 +605,25 @@ function PostCard({
         />
         <div className="absolute inset-0 bg-gradient-to-t from-[#0f1a0c] via-transparent to-transparent opacity-80" />
         <div className="absolute top-3 left-3">
-          <span className="font-mono text-[9px] tracking-widest uppercase px-2 py-1 bg-[#080c06aa] text-[#c5f135]">
+          <span className="font-mono text-[9px] tracking-widest uppercase px-2 py-1 bg-[#080c06aa] backdrop-blur text-[#c5f135]">
             {post.cat}
           </span>
         </div>
+        {/* Botón de borrar (NUEVO) */}
+        {isOwner && (
+          <button
+            onClick={(e) => {
+              e.stopPropagation()
+              onDelete()
+            }}
+            className="absolute top-3 right-3 p-2 bg-[#080c06aa] backdrop-blur rounded-full text-[#8fa882] hover:text-red-500 hover:bg-red-500/20 transition-all opacity-0 group-hover:opacity-100"
+            title="Borrar publicación"
+          >
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" className="w-4 h-4">
+              <path d="M3 6h18M19 6v14a2 2 0 01-2 2H7a2 2 0 01-2-2V6m3 0V4a2 2 0 012-2h4a2 2 0 012 2v2"></path>
+            </svg>
+          </button>
+        )}
       </div>
 
       <div className="p-4">
@@ -449,24 +638,40 @@ function PostCard({
             {post.time}
           </span>
         </div>
-        <h3 className="font-display text-[#f0ede6] text-base font-medium leading-tight mb-3">
+        <h3 className="font-display text-[#f0ede6] text-base font-medium leading-tight mb-4">
           {post.title}
         </h3>
-        <div className="flex items-center gap-4">
+        <div className="flex items-center gap-5">
           <button
             onClick={e => {
               e.stopPropagation()
               onLike()
             }}
-            className={`flex items-center gap-1.5 font-mono text-[10px] tracking-widest transition-colors ${
-              liked ? 'text-[#c5f135]' : 'text-[#8fa882] hover:text-[#c5f135]'
-            }`}
+            className={`flex items-center gap-1.5 font-mono text-[11px] tracking-widest transition-transform hover:scale-110 ${liked ? 'text-[#c5f135]' : 'text-[#8fa882] hover:text-[#c5f135]'
+              }`}
           >
-            <span>{liked ? '♥' : '♡'}</span>
+            <span className="text-sm">
+              {/* Pulgar arriba SVG */}
+              <svg aria-hidden="true" viewBox="0 0 24 24" fill={liked ? "currentColor" : "none"} stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className="w-4 h-4">
+                <path d="M14 9V5a3 3 0 0 0-3-3l-4 9v11h11.28a2 2 0 0 0 2-1.7l1.38-9a2 2 0 0 0-2-2.3zM7 22H4a2 2 0 0 1-2-2v-7a2 2 0 0 1 2-2h3"></path>
+              </svg>
+            </span>
             {post.likes}
           </button>
-          <button className="flex items-center gap-1.5 font-mono text-[10px] tracking-widest text-[#8fa882] hover:text-[#f0ede6] transition-colors">
-            <span>◯</span>
+
+          <button
+            onClick={e => {
+              e.stopPropagation()
+              onComment()
+            }}
+            className="flex items-center gap-1.5 font-mono text-[11px] tracking-widest text-[#8fa882] hover:text-[#f0ede6] transition-transform hover:scale-110"
+          >
+            <span className="text-sm">
+              {/* Icono de Bocadillo de chat SVG */}
+              <svg aria-hidden="true" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className="w-4 h-4">
+                <path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"></path>
+              </svg>
+            </span>
             {post.comments}
           </button>
         </div>

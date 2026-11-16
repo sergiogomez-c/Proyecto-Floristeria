@@ -74,7 +74,7 @@ export async function obtenerPublicacionesForo(
       likes_base,
       comentarios_base,
       categorias_foro(nombre),
-      usuarios(nombre, email),
+      usuarios!usuario_id(nombre, email),
       imagenes_publicacion(imagen_url),
       me_gusta(usuario_id),
       comentarios(id)
@@ -84,7 +84,8 @@ export async function obtenerPublicacionesForo(
     .order('creado_en', { ascending: false })
 
   if (error) {
-    throw new Error('No se pudieron cargar las publicaciones del foro.')
+    console.error("Error real de publicaciones:", error);
+    throw new Error(error.message);
   }
 
   const filas = (data ?? []) as unknown as FilaPublicacion[]
@@ -111,6 +112,7 @@ export async function obtenerPublicacionesForo(
 
     return {
       id: fila.id,
+      usuario_id: fila.usuario_id,
       user: handleAutor.startsWith('@') ? handleAutor : `@${handleAutor}`,
       name: nombreAutor,
       cat: catRel?.nombre ?? 'Mis plantas',
@@ -130,8 +132,9 @@ export async function obtenerPublicacionesForo(
 export async function obtenerEstadisticasForo(): Promise<EstadisticasForo> {
   const { data, error } = await supabase.rpc('obtener_estadisticas_foro')
 
-  if (error || !Array.isArray(data) || data.length === 0) {
-    throw new Error('No se pudieron cargar las estadísticas de la comunidad.')
+  if (error) {
+    console.error("Error real de estadisticas:", error)
+    throw new Error(error.message);
   }
 
   const fila = data[0] as {
@@ -241,5 +244,23 @@ export async function alternarLikePublicacion(
 
   if (error) {
     throw new Error('No se pudo registrar el me gusta.')
+  }
+
+
+}
+
+export async function eliminarPublicacion(publicacionId: number): Promise<void> {
+  const { data: { session } } = await supabase.auth.getSession()
+  if (!session) throw new Error('Debes iniciar sesión para borrar')
+
+  const { error } = await supabase
+    .from('publicaciones_foro')
+    .delete()
+    .eq('id', publicacionId)
+    .eq('usuario_id', session.user.id) // Doble seguridad: solo borra si es tuya
+
+  if (error) {
+    console.error("Error al borrar:", error)
+    throw new Error(error.message)
   }
 }
