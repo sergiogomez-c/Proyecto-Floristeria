@@ -14,6 +14,7 @@ interface FilaPublicacion {
   usuario_id: string | null
   categoria_id: number
   titulo: string
+  descripcion: string | null // <-- AÑADIDO PARA EVITAR EL ERROR DE TYPESCRIPT
   creado_en: string
   autor_handle: string | null
   autor_nombre: string | null
@@ -67,6 +68,7 @@ export async function obtenerPublicacionesForo(
       usuario_id,
       categoria_id,
       titulo,
+      descripcion,
       creado_en,
       autor_handle,
       autor_nombre,
@@ -112,7 +114,8 @@ export async function obtenerPublicacionesForo(
 
     return {
       id: fila.id,
-      usuario_id: fila.usuario_id,
+      usuario_id: fila.usuario_id || '',
+      descripcion: fila.descripcion || '',
       user: handleAutor.startsWith('@') ? handleAutor : `@${handleAutor}`,
       name: nombreAutor,
       cat: catRel?.nombre ?? 'Mis plantas',
@@ -154,6 +157,7 @@ export async function crearPublicacionConImagen(params: {
   usuarioId: string
   categoriaId: number
   titulo: string
+  descripcion: string
   archivo: File
 }): Promise<void> {
   const extension = params.archivo.name.split('.').pop()?.toLowerCase() || 'jpg'
@@ -186,12 +190,11 @@ export async function crearPublicacionConImagen(params: {
     perfil?.nombre?.trim() || perfil?.email?.split('@')[0] || 'Usuario'
   const handleVisible = `@${nombreVisible.toLowerCase().replace(/\s+/g, '.')}`
 
-  const { data: publicacionCreada, error: errorPub } = await supabase
-    .from('publicaciones_foro')
-    .insert({
+  const { data: publicacionCreada, error: errorPub } = await supabase.from('publicaciones_foro').insert({
       usuario_id: params.usuarioId,
       categoria_id: params.categoriaId,
       titulo: params.titulo.trim(),
+      descripcion: params.descripcion.trim(), // <-- AÑADIDO PARA QUE SE GUARDE EN LA BASE DE DATOS
       contenido: params.titulo.trim(),
       estado: 'publicada',
       autor_nombre: nombreVisible,
@@ -245,8 +248,6 @@ export async function alternarLikePublicacion(
   if (error) {
     throw new Error('No se pudo registrar el me gusta.')
   }
-
-
 }
 
 export async function eliminarPublicacion(publicacionId: number): Promise<void> {
