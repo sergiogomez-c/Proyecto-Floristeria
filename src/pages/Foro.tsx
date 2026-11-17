@@ -299,7 +299,13 @@ function SeccionComentarios({ postId, user, onRequireAuth }: any) {
 
   useEffect(() => {
     async function fetchComentarios() {
-      const { data } = await supabase.from('comentarios').select('id, texto, creado_en, usuarios(nombre)').eq('publicacion_id', postId).order('creado_en', { ascending: true })
+      // CORRECCIÓN 1: Añadido !usuario_id para que no haya conflictos de relaciones
+      const { data } = await supabase
+        .from('comentarios')
+        .select('id, texto, creado_en, usuarios!usuario_id(nombre)')
+        .eq('publicacion_id', postId)
+        .order('creado_en', { ascending: true })
+
       if (data) {
         setComentarios(data.map(c => ({
           id: c.id, texto: c.texto,
@@ -319,7 +325,12 @@ function SeccionComentarios({ postId, user, onRequireAuth }: any) {
     const textoGuardar = nuevo
     setNuevo('') 
 
-    const { data, error } = await supabase.from('comentarios').insert({ publicacion_id: postId, usuario_id: user.id, texto: textoGuardar }).select('id, texto, usuarios(nombre)').single()
+    // CORRECCIÓN 2: Añadido !usuario_id en el select del insert
+    const { data, error } = await supabase
+      .from('comentarios')
+      .insert({ publicacion_id: postId, usuario_id: user.id, texto: textoGuardar })
+      .select('id, texto, usuarios!usuario_id(nombre)')
+      .single()
 
     if (!error && data) {
       setComentarios(prev => [...prev, {
@@ -327,8 +338,9 @@ function SeccionComentarios({ postId, user, onRequireAuth }: any) {
         usuario: Array.isArray(data.usuarios) ? data.usuarios[0]?.nombre || 'Yo' : (data.usuarios as any)?.nombre || 'Yo'
       }])
     } else {
-      alert("Error al enviar comentario. Revisa los permisos.")
-      console.error(error)
+      // CORRECCIÓN 3: Ahora la alerta mostrará el error exacto de Supabase
+      alert("Error de Supabase: " + (error?.message || "Desconocido"))
+      console.error("Error completo al enviar:", error)
     }
   }
 
@@ -338,7 +350,7 @@ function SeccionComentarios({ postId, user, onRequireAuth }: any) {
          <h4 className="font-mono text-[#c5f135] text-xs tracking-widest uppercase">Comentarios</h4>
       </div>
       
-      {/* SCROLL INDEPENDIENTE (El recuadro que pedías que no se mueva) */}
+      {/* SCROLL INDEPENDIENTE */}
       <div className="flex-1 overflow-y-auto p-4 space-y-4">
         {loading ? <p className="text-[#3a4d36] text-xs font-mono">Cargando...</p> : comentarios.length === 0 ? <p className="text-[#3a4d36] text-xs font-mono">Sé el primero en comentar.</p> : (
           comentarios.map(c => (
