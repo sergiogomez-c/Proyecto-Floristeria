@@ -299,16 +299,17 @@ function SeccionComentarios({ postId, user, onRequireAuth }: any) {
 
   useEffect(() => {
     async function fetchComentarios() {
-      // CORRECCIÓN 1: Añadido !usuario_id para que no haya conflictos de relaciones
+      // AQUÍ: select pide 'contenido'
       const { data } = await supabase
         .from('comentarios')
-        .select('id, texto, creado_en, usuarios!usuario_id(nombre)')
+        .select('id, contenido, creado_en, usuarios!usuario_id(nombre)')
         .eq('publicacion_id', postId)
         .order('creado_en', { ascending: true })
 
       if (data) {
         setComentarios(data.map(c => ({
-          id: c.id, texto: c.texto,
+          id: c.id, 
+          contenido: c.contenido, // AQUÍ
           usuario: Array.isArray(c.usuarios) ? c.usuarios[0]?.nombre || 'Usuario' : (c.usuarios as any)?.nombre || 'Usuario',
         })))
       }
@@ -325,20 +326,20 @@ function SeccionComentarios({ postId, user, onRequireAuth }: any) {
     const textoGuardar = nuevo
     setNuevo('') 
 
-    // CORRECCIÓN 2: Añadido !usuario_id en el select del insert
+    // AQUÍ: insert usa 'contenido'
     const { data, error } = await supabase
       .from('comentarios')
-      .insert({ publicacion_id: postId, usuario_id: user.id, texto: textoGuardar })
-      .select('id, texto, usuarios!usuario_id(nombre)')
+      .insert({ publicacion_id: postId, usuario_id: user.id, contenido: textoGuardar })
+      .select('id, contenido, usuarios!usuario_id(nombre)')
       .single()
 
     if (!error && data) {
       setComentarios(prev => [...prev, {
-        id: data.id, texto: data.texto,
+        id: data.id, 
+        contenido: data.contenido, // AQUÍ
         usuario: Array.isArray(data.usuarios) ? data.usuarios[0]?.nombre || 'Yo' : (data.usuarios as any)?.nombre || 'Yo'
       }])
     } else {
-      // CORRECCIÓN 3: Ahora la alerta mostrará el error exacto de Supabase
       alert("Error de Supabase: " + (error?.message || "Desconocido"))
       console.error("Error completo al enviar:", error)
     }
@@ -356,7 +357,8 @@ function SeccionComentarios({ postId, user, onRequireAuth }: any) {
           comentarios.map(c => (
             <div key={c.id} className="bg-[#0f1a0c] p-3 border border-[#1e2e1a]">
               <p className="font-mono text-[#8fa882] text-[10px] uppercase mb-1">{c.usuario}</p>
-              <p className="font-body text-[#f0ede6] text-sm">{c.texto}</p>
+              {/* AQUÍ: pintamos c.contenido */}
+              <p className="font-body text-[#f0ede6] text-sm">{c.contenido}</p>
             </div>
           ))
         )}
