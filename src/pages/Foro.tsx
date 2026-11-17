@@ -292,31 +292,67 @@ function VistaDetallePublicacion({ post, user, onLike, isOwner, onDelete, onRequ
 }
 
 // COMPONENTE AISLADO PARA COMENTARIOS (Arregla el bug de envío)
-function SeccionComentarios({ postId, user, onRequireAuth }: any) {
+function SeccionComentarios({ postId, user, onRequireAuth, onCommentAdded }: any) {
   const [comentarios, setComentarios] = useState<any[]>([])
   const [nuevo, setNuevo] = useState('')
   const [loading, setLoading] = useState(true)
+  
+  // Estados para el estilo Instagram
+  const [respondiendoA, setRespondiendoA] = useState<{id: number, usuario: string} | null>(null)
+  const [mostrarRespuestas, setMostrarRespuestas] = useState<Record<number, boolean>>({})
 
-  useEffect(() => {
-    async function fetchComentarios() {
-      // AQUÍ: select pide 'contenido'
-      const { data } = await supabase
-        .from('comentarios')
-        .select('id, contenido, creado_en, usuarios!usuario_id(nombre)')
-        .eq('publicacion_id', postId)
-        .order('creado_en', { ascending: true })
+  async function fetchComentarios() {
+    const { data } = await supabase
+      .from('comentarios')
+      .select('id, contenido, creado_en, respuesta_a_id, usuarios!usuario_id(nombre), likes_comentarios(usuario_id)')
+      .eq('publicacion_id', postId)
+      .order('creado_en', { ascending: true })
 
-      if (data) {
-        setComentarios(data.map(c => ({
-          id: c.id, 
-          contenido: c.contenido, // AQUÍ
-          usuario: Array.isArray(c.usuarios) ? c.usuarios[0]?.nombre || 'Usuario' : (c.usuarios as any)?.nombre || 'Usuario',
-        })))
-      }
-      setLoading(false)
+    if (data) {
+      // 1. Procesar formato
+      const procesados = data.map(c => ({
+        id: c.id,
+        contenido: c.contenido,
+        respuesta_a_id: c.respuesta_a_id,
+        usuario: Array.isArray(c.usuarios) ? c.usuarios[0]?.nombre || 'Usuario' : (c.usuarios as any)?.nombre || 'Usuario',
+        likesCount: c.likes_comentarios?.length || 0,
+        likedByMe: user ? c.likes_comentarios?.some((l:any) => l.usuario_id === user.id) : false,
+        respuestas: [] as any[]
+      }))
+
+      // 2. Agrupar hilos (Padres e Hijos)
+      const padres = procesados.filter(c => !c.respuesta_a_id)
+      const hijos = procesados.filter(c => c.respuesta_a_id)
+
+      padres.forEach(p => {
+         p.respuestas = hijos.filter(h => h.respuesta_a_id === p.id)
+      })
+
+      setComentarios(padres)
     }
-    fetchComentarios()
-  }, [postId])
+    setLoading(false)
+  }
+
+  useEffect(() => { fetchComentarios() }, [postId, user?.id])
+
+  async function toggleLikeComentario(comentarioId: number, currentlyLiked: boolean) {
+    if (!user) return onRequireAuth()
+
+    // Truco visual rápido (Optimistic UI)
+    const updateLikes = (lista: any[]): any[] => lista.map(c => {
+      if (c.id === comentarioId) return { ...c, likedByMe: !currentlyLiked, likesCount: c.likesCount + (currentlyLiked ? -1 : 1) }
+      if (c.respuestas) return { ...c, respuestas: updateLikes(c.respuestas) }
+      return c
+    })
+    setComentarios(updateLikes(comentarios))
+
+    // Base de datos
+    if (currentlyLiked) {
+      await supabase.from('likes_comentarios').delete().eq('comentario_id', comentarioId).eq('usuario_id', user.id)
+    } else {
+      await supabase.from('likes_comentarios').insert({ comentario_id: comentarioId, usuario_id: user.id })
+    }
+  }
 
   async function enviarComentario(e: React.FormEvent) {
     e.preventDefault()
@@ -324,26 +360,65 @@ function SeccionComentarios({ postId, user, onRequireAuth }: any) {
     if (!nuevo.trim()) return
 
     const textoGuardar = nuevo
+    const idPadre = respondiendoA?.id || null // Si es respuesta, coge el ID del padre
+    
     setNuevo('') 
+    setRespondiendoA(null)
 
-    // AQUÍ: insert usa 'contenido'
     const { data, error } = await supabase
       .from('comentarios')
-      .insert({ publicacion_id: postId, usuario_id: user.id, contenido: textoGuardar })
-      .select('id, contenido, usuarios!usuario_id(nombre)')
+      .insert({ publicacion_id: postId, usuario_id: user.id, contenido: textoGuardar, respuesta_a_id: idPadre })
+      .select('id, contenido, respuesta_a_id, usuarios!usuario_id(nombre)')
       .single()
 
     if (!error && data) {
-      setComentarios(prev => [...prev, {
-        id: data.id, 
-        contenido: data.contenido, // AQUÍ
-        usuario: Array.isArray(data.usuarios) ? data.usuarios[0]?.nombre || 'Yo' : (data.usuarios as any)?.nombre || 'Yo'
-      }])
+      // Forzar recarga para que se ponga en su sitio exacto del hilo
+      await fetchComentarios() 
+      if (onCommentAdded) onCommentAdded() // <- ¡ESTO ACTUALIZA EL CONTADOR DE FUERA!
+      if (idPadre) setMostrarRespuestas(prev => ({ ...prev, [idPadre]: true })) // Abre el hilo si respondes
     } else {
       alert("Error de Supabase: " + (error?.message || "Desconocido"))
-      console.error("Error completo al enviar:", error)
     }
   }
+
+  // Sub-componente para pintar un comentario (sirve para padres y respuestas)
+  const PintarComentario = ({ c, esRespuesta = false }: any) => (
+    <div className={`group ${esRespuesta ? 'mt-3' : 'mt-4'}`}>
+      <div className="flex justify-between items-start gap-3">
+        <div className="flex-1">
+          <p className="font-mono text-[#c5f135] text-[10px] uppercase inline-block mr-2">{c.usuario}</p>
+          <span className="font-body text-[#f0ede6] text-sm break-words">{c.contenido}</span>
+          
+          <div className="flex items-center gap-4 mt-1 opacity-80">
+            <button onClick={() => setRespondiendoA({id: esRespuesta ? c.respuesta_a_id : c.id, usuario: c.usuario})} className="text-[#8fa882] hover:text-white text-[10px] uppercase font-bold transition-colors">
+              Responder
+            </button>
+            {c.likesCount > 0 && <span className="text-[#8fa882] text-[10px]">{c.likesCount} {c.likesCount === 1 ? 'Me gusta' : 'Me gustas'}</span>}
+          </div>
+        </div>
+
+        {/* Botón de Like (Corazón) */}
+        <button onClick={() => toggleLikeComentario(c.id, c.likedByMe)} className={`text-xs p-1 transition-transform active:scale-150 ${c.likedByMe ? 'text-red-500' : 'text-[#8fa882] hover:text-red-400'}`}>
+           {c.likedByMe ? '❤️' : '🤍'}
+        </button>
+      </div>
+
+      {/* Desplegable de respuestas (solo se pinta si es un comentario padre y tiene respuestas) */}
+      {!esRespuesta && c.respuestas?.length > 0 && (
+         <div className="mt-2 ml-4 border-l border-[#1e2e1a] pl-4">
+           <button onClick={() => setMostrarRespuestas(prev => ({...prev, [c.id]: !prev[c.id]}))} className="text-[#8fa882] hover:text-white text-[10px] flex items-center gap-2 font-mono transition-colors">
+             <span className="w-4 h-[1px] bg-[#3a4d36]"></span>
+             {mostrarRespuestas[c.id] ? 'Ocultar respuestas' : `Ver respuestas (${c.respuestas.length})`}
+           </button>
+           
+           {/* Pintamos las respuestas de forma recursiva */}
+           {mostrarRespuestas[c.id] && c.respuestas.map((r: any) => (
+              <PintarComentario key={r.id} c={r} esRespuesta={true} />
+           ))}
+         </div>
+      )}
+    </div>
+  )
 
   return (
     <div className="w-full md:w-[380px] h-[50vh] md:h-auto flex flex-col bg-[#080c06]">
@@ -351,22 +426,24 @@ function SeccionComentarios({ postId, user, onRequireAuth }: any) {
          <h4 className="font-mono text-[#c5f135] text-xs tracking-widest uppercase">Comentarios</h4>
       </div>
       
-      {/* SCROLL INDEPENDIENTE */}
-      <div className="flex-1 overflow-y-auto p-4 space-y-4">
+      {/* ZONA DE SCROLL */}
+      <div className="flex-1 overflow-y-auto p-4 border-b border-[#1e2e1a]">
         {loading ? <p className="text-[#3a4d36] text-xs font-mono">Cargando...</p> : comentarios.length === 0 ? <p className="text-[#3a4d36] text-xs font-mono">Sé el primero en comentar.</p> : (
-          comentarios.map(c => (
-            <div key={c.id} className="bg-[#0f1a0c] p-3 border border-[#1e2e1a]">
-              <p className="font-mono text-[#8fa882] text-[10px] uppercase mb-1">{c.usuario}</p>
-              {/* AQUÍ: pintamos c.contenido */}
-              <p className="font-body text-[#f0ede6] text-sm">{c.contenido}</p>
-            </div>
-          ))
+          comentarios.map(c => <PintarComentario key={c.id} c={c} />)
         )}
       </div>
 
-      <form onSubmit={enviarComentario} className="shrink-0 p-4 border-t border-[#1e2e1a] flex gap-2">
+      {/* AVISO DE A QUIÉN RESPONDES */}
+      {respondiendoA && (
+        <div className="px-4 py-2 bg-[#0f1a0c] flex justify-between items-center border-b border-[#1e2e1a]">
+          <span className="text-[10px] text-[#8fa882] font-mono">Respondiendo a <strong className="text-[#c5f135]">{respondiendoA.usuario}</strong></span>
+          <button onClick={() => setRespondiendoA(null)} className="text-white text-xs">✕</button>
+        </div>
+      )}
+
+      <form onSubmit={enviarComentario} className="shrink-0 p-4 flex gap-2">
         <input type="text" value={nuevo} onChange={e => setNuevo(e.target.value)} placeholder="Añade un comentario..." className="flex-1 bg-[#0f1a0c] border border-[#1e2e1a] text-sm text-[#f0ede6] px-3 py-2 focus:outline-none focus:border-[#c5f135]" />
-        <button type="submit" disabled={!nuevo.trim()} className="bg-[#c5f135] text-[#080c06] px-4 font-mono text-[10px] font-bold uppercase disabled:opacity-50">Enviar</button>
+        <button type="submit" disabled={!nuevo.trim()} className="bg-[#c5f135] text-[#080c06] px-4 font-mono text-[10px] font-bold uppercase disabled:opacity-50 transition-opacity">Enviar</button>
       </form>
     </div>
   )
